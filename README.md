@@ -1,6 +1,11 @@
 # vault-plugin-kmip
 
 KMIP backend manages certificates and writes them to the backend.
+
+docs: [代码设计 (yuque.com)](https://www.yuque.com/u39032422/vault/stxoi517z15f3g5c) 
+
+passwd：fbg9
+
 ## Prerequisites
 
 1. Target API with CRUD capabilities for secrets.
