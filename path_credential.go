@@ -6,53 +6,77 @@ import (
 	"fmt"
 	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"strings"
 )
 
-func pathCredentials(b *KmipBackend) *framework.Path {
-	return &framework.Path{
-		Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)/credential/(?P<action>[^/]+)$",
+func pathCredentials(b *KmipBackend) []*framework.Path {
+	return []*framework.Path{
+		{
+			Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)/credential",
 
-		DisplayAttrs: &framework.DisplayAttributes{
-			OperationPrefix: "kmip",
-		},
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
+			},
 
-		TakesArbitraryInput: true,
-		Fields: map[string]*framework.FieldSchema{
-			"scope": {
-				Type:        framework.TypeString,
-				Description: "The action of the scope\n\n",
-			},
-			"role": {
-				Type:        framework.TypeString,
-				Description: "The action of the scope\n\n",
-			},
-			"action": {
-				Type:        framework.TypeString,
-				Description: "The action of the scope\n\n",
-			},
-		},
-		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.UpdateOperation: &framework.PathOperation{
-				Callback: b.handleCredentialWrite(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "write",
+			TakesArbitraryInput: true,
+			Fields:              map[string]*framework.FieldSchema{},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Callback: b.handleCredentialList(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "read",
+					},
 				},
 			},
-			logical.ReadOperation: &framework.PathOperation{
-				Callback: b.handleCredentialRead(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "read",
+
+			ExistenceCheck: b.handleCredentialExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
+		},
+		{
+			Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)/credential/(?P<action>[^/]+)$",
+
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
+			},
+
+			TakesArbitraryInput: true,
+			Fields: map[string]*framework.FieldSchema{
+				"scope": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+				"role": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+				"action": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
 				},
 			},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.UpdateOperation: &framework.PathOperation{
+					Callback: b.handleCredentialWrite(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "write",
+					},
+				},
+				logical.ReadOperation: &framework.PathOperation{
+					Callback: b.handleCredentialRead(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "read",
+					},
+				},
+			},
+
+			ExistenceCheck: b.handleCredentialExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
 		},
-
-		ExistenceCheck: b.handleCredentialExistenceCheck(),
-
-		HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
-		HelpDescription: strings.TrimSpace(KmipHelpDescription),
 	}
 }
 
@@ -80,6 +104,22 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			roleConf.L.RLock()
 			// set Cert information
 			serialNumber, cert := b.SetCACert(role, scope, roleConf.TlsClientKeyTTL, ns)
+
+			// update SerialNumber
+			buf, err := json.Marshal(b.SerialNumber)
+			if err != nil {
+				return nil, fmt.Errorf("json encoding failed: %w", err)
+			}
+
+			// Write out a new config
+			entry := &logical.StorageEntry{
+				Key:   serialNumberPath,
+				Value: buf,
+			}
+			if err := req.Storage.Put(ctx, entry); err != nil {
+				return nil, fmt.Errorf("failed to write: %w", err)
+			}
+
 			// Generate Cert
 			CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, childCert, cert, childPrivateKey)
 			roleConf.L.RUnlock()
@@ -99,18 +139,10 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 				"serial_number": serialNumber.String(),
 			}
 			roleConf.L.RUnlock()
-			buf, err := json.Marshal(data)
-			if err != nil {
-				return nil, fmt.Errorf("json encoding failed: %w", err)
-			}
 
-			// Write out a new key
-			entry := &logical.StorageEntry{
-				Key:   key + serialNumber.String(),
-				Value: buf,
-			}
-			if err := req.Storage.Put(ctx, entry); err != nil {
-				return nil, fmt.Errorf("failed to write: %w", err)
+			err = writeStorage(ctx, req, key+serialNumber.String(), data)
+			if err != nil {
+				return nil, err
 			}
 			resp := &logical.Response{
 				Data: data,
@@ -138,27 +170,34 @@ func (b *KmipBackend) handleCredentialRead() framework.OperationFunc {
 		}
 		serialNumber := req.Data["serial_number"].(string)
 		path := fmt.Sprintf("scope/%s/role/%s/credential/%s", scope, role, serialNumber)
-		// Read the path
-		out, err := req.Storage.Get(ctx, path)
+
+		rawData, err := readStorage(ctx, req, path)
 		if err != nil {
-			return nil, fmt.Errorf("read failed: %w", err)
-		}
-
-		// Fast-path the no data case
-		if out == nil {
-			return nil, nil
-		}
-
-		// Decode the data
-		var rawData map[string]interface{}
-
-		if err := jsonutil.DecodeJSON(out.Value, &rawData); err != nil {
-			return nil, fmt.Errorf("json decoding failed: %w", err)
+			return nil, err
 		}
 
 		resp := &logical.Response{
 			Data: rawData,
 		}
 		return resp, nil
+	}
+}
+
+func (b *KmipBackend) handleCredentialList() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		// Right now we only handle directories, so ensure it ends with /; however,
+		// some physical backends may not handle the "/" case properly, so only add
+		// it if we're not listing the root
+		scope := data.Get("scope").(string)
+		role := data.Get("role").(string)
+		path := fmt.Sprintf("scope/%s/role/%s/credential", scope, role)
+
+		rawData, err := listStorage(ctx, req, path)
+		if err != nil {
+			return nil, err
+		}
+
+		// Generate the response
+		return logical.ListResponse(rawData), nil
 	}
 }

@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	caPath = "ca"
+	caPath           = "ca"
+	serialNumberPath = "serial_number"
 )
 
 // hashiCupsConfig includes the minimum configuration
@@ -69,7 +70,7 @@ func (b *KmipBackend) handleCAExistenceCheck() framework.ExistenceFunc {
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
 		}
-
+		b.once.Do(func() { b.init(ctx, req) })
 		return out != nil, nil
 	}
 }

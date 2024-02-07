@@ -3,10 +3,8 @@ package kmipengine
 import (
 	"context"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"net/http"
 	"strings"
@@ -65,6 +63,12 @@ func pathRole(b *KmipBackend) *framework.Path {
 					}},
 				},
 			},
+			logical.ListOperation: &framework.PathOperation{
+				Callback: b.handleRoleList(),
+				DisplayAttrs: &framework.DisplayAttributes{
+					OperationVerb: "read",
+				},
+			},
 		},
 
 		ExistenceCheck: b.handleRoleExistenceCheck(),
@@ -90,7 +94,9 @@ func (b *KmipBackend) handleRoleExistenceCheck() framework.ExistenceFunc {
 		if err != nil {
 			return false, fmt.Errorf("role existence check err: %s : %s -- %w", scope, role, err)
 		}
-
+		if out != nil {
+			b.once.Do(func() { b.init(ctx, req) })
+		}
 		return true, nil
 	}
 }
@@ -141,19 +147,9 @@ func (b *KmipBackend) handleRoleWrite() framework.OperationFunc {
 			role.TlsClientKeyTTL = req.Data["tls_client_ttl"].(string)
 		}
 		role.L.Unlock()
-		// JSON encode the data
-		buf, err := json.Marshal(req.Data)
-		if err != nil {
-			return nil, fmt.Errorf("json encoding failed: %w", err)
-		}
 
-		// Write out a new key
-		entry := &logical.StorageEntry{
-			Key:   key,
-			Value: buf,
-		}
-		if err := req.Storage.Put(ctx, entry); err != nil {
-			return nil, fmt.Errorf("failed to write: %w", err)
+		if err := writeStorage(ctx, req, key, req.Data); err != nil {
+			return nil, err
 		}
 
 		return nil, nil
@@ -164,24 +160,11 @@ func (b *KmipBackend) handleRoleRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		scope := data.Get("scope").(string)
 		role := data.Get("role").(string)
-		key := "scope/" + scope + "/role/" + role
+		path := "scope/" + scope + "/role/" + role
 
-		// Read the path
-		out, err := req.Storage.Get(ctx, key)
+		rawData, err := readStorage(ctx, req, path)
 		if err != nil {
-			return nil, fmt.Errorf("read failed: %w", err)
-		}
-
-		// Fast-path the no data case
-		if out == nil {
-			return nil, nil
-		}
-
-		// Decode the data
-		var rawData map[string]interface{}
-
-		if err := jsonutil.DecodeJSON(out.Value, &rawData); err != nil {
-			return nil, fmt.Errorf("json decoding failed: %w", err)
+			return nil, err
 		}
 
 		resp := &logical.Response{
@@ -189,5 +172,22 @@ func (b *KmipBackend) handleRoleRead() framework.OperationFunc {
 			Data:   rawData,
 		}
 		return resp, nil
+	}
+}
+
+func (b *KmipBackend) handleRoleList() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		// Right now we only handle directories, so ensure it ends with /; however,
+		// some physical backends may not handle the "/" case properly, so only add
+		// it if we're not listing the root
+		scope := data.Get("scope").(string)
+		path := "scope/" + scope + "/role/"
+
+		d, err := listStorage(ctx, req, path)
+		if err != nil {
+			return nil, err
+		}
+		// Generate the response
+		return logical.ListResponse(d), nil
 	}
 }

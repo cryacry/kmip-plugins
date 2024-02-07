@@ -7,10 +7,12 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Scope struct {
+	L     *sync.RWMutex
 	Roles map[string]*Role
 }
 
@@ -58,7 +60,9 @@ func (b *KmipBackend) handleScopeExistenceCheck() framework.ExistenceFunc {
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
 		}
-
+		if out != nil {
+			b.once.Do(func() { b.init(ctx, req) })
+		}
 		return out != nil, nil
 	}
 }
@@ -122,6 +126,7 @@ func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
 		}
 		//kvEvent(ctx, b.Backend, "write", key, key, true, 1)
 		b.scopes[scope] = &Scope{
+			L:     new(sync.RWMutex),
 			Roles: make(map[string]*Role),
 		}
 		return nil, nil

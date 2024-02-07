@@ -99,37 +99,23 @@ func (b *KmipBackend) handleConfigExistenceCheck() framework.ExistenceFunc {
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
 		}
-
+		if out != nil {
+			b.once.Do(func() { b.init(ctx, req) })
+		}
 		return out != nil, nil
 	}
 }
 
 func (b *KmipBackend) handleConfigRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		key := configPath
-
-		// Read the path
-		out, err := req.Storage.Get(ctx, key)
+		rawData, err := readStorage(ctx, req, configPath)
 		if err != nil {
-			return nil, fmt.Errorf("read failed: %w", err)
-		}
-
-		// Fast-path the no data case
-		if out == nil {
-			return nil, nil
-		}
-
-		// Decode the data
-		var rawData map[string]interface{}
-
-		if err := jsonutil.DecodeJSON(out.Value, &rawData); err != nil {
 			return nil, fmt.Errorf("json decoding failed: %w", err)
 		}
 		resp := &logical.Response{
 			Secret: &logical.Secret{},
 			Data:   rawData,
 		}
-
 		return resp, nil
 	}
 
@@ -139,6 +125,9 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		key := configPath
 		ns, err := namespace.FromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
 		// Check that some fields are given
 		if len(req.Data) == 0 {
 			return logical.ErrorResponse("missing data fields"), nil
@@ -174,8 +163,8 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 
 		// update caCert
 		{
-			_, err := req.Storage.Get(ctx, caPath)
-			if err != nil && newCA == false {
+			out, err := req.Storage.Get(ctx, caPath)
+			if err != nil && out != nil && newCA == false {
 				// CA exists and does not need to be updated
 				goto setConfig
 			}
@@ -191,6 +180,22 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 			if err != nil {
 				return nil, err
 			}
+
+			// update SerialNumber
+			buf, err := json.Marshal(b.SerialNumber)
+			if err != nil {
+				return nil, fmt.Errorf("json encoding failed: %w", err)
+			}
+
+			// Write out a new config
+			entry := &logical.StorageEntry{
+				Key:   serialNumberPath,
+				Value: buf,
+			}
+			if err := req.Storage.Put(ctx, entry); err != nil {
+				return nil, fmt.Errorf("failed to write: %w", err)
+			}
+
 			rootPEM, err := CertPEM(rootCertBytes)
 			if err != nil {
 				return nil, err
@@ -202,25 +207,27 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 			// add in cache
 			b.addRootCAChain(-1, rootPEM, rootCertBytes, rootCert, rootPrivateKey)
 			b.addRootCAChain(-1, childPEM, childCertBytes, childCert, childPrivateKey)
-			buf, err := json.Marshal(b.rootCA)
+			// update CA Chain
+			buf, err = json.Marshal(b.rootCA)
 			if err != nil {
 				return nil, fmt.Errorf("json encoding failed: %w", err)
 			}
 			// Write out a new config
-			entry := &logical.StorageEntry{
+			entry = &logical.StorageEntry{
 				Key:   caPath,
 				Value: buf,
 			}
 			if err := req.Storage.Put(ctx, entry); err != nil {
 				return nil, fmt.Errorf("failed to write: %w", err)
 			}
+
 			// 2、更新所有空间下的所有角色的证书
 			for scopeName, scopes := range b.scopes {
 				for roleName, roleConf := range scopes.Roles {
 					key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
 					// Generate Cert
 					CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
-					// store
+					// PEM format
 					certificate, err := CertPEM(CertBytes)
 					if err != nil {
 						continue
@@ -231,18 +238,8 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 						"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
 						"serial_number": roleConf.SerialNumber,
 					}
-					// store
-					buf, err := json.Marshal(data)
-					if err != nil {
-						return nil, fmt.Errorf("json encoding failed: %w", err)
-					}
-
-					// Write out a new key
-					entry := &logical.StorageEntry{
-						Key:   key + roleConf.SerialNumber,
-						Value: buf,
-					}
-					if err := req.Storage.Put(ctx, entry); err != nil {
+					// write credential information
+					if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
 						return nil, fmt.Errorf("failed to write: %w", err)
 					}
 
@@ -251,18 +248,7 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		}
 
 	setConfig:
-		// JSON encode the data
-		buf, err := json.Marshal(conf)
-		if err != nil {
-			return nil, fmt.Errorf("json encoding failed: %w", err)
-		}
-
-		// Write out a new config
-		entry := &logical.StorageEntry{
-			Key:   key,
-			Value: buf,
-		}
-		if err := req.Storage.Put(ctx, entry); err != nil {
+		if err := writeStorage(ctx, req, key, conf); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
 		return nil, nil
@@ -270,7 +256,7 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 }
 
 func DefaultConfigMap() map[string]interface{} {
-	// 创建一个TLSConfig结构体的实例
+	// Return default tls information
 	return map[string]interface{}{
 		"default_tls_client_key_bits": 2048,
 		"default_tls_client_key_type": rsa_key_type,
