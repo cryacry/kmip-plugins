@@ -21,60 +21,84 @@ type Role struct {
 	SerialNumber     string            `json:"serial_number "`
 }
 
-func pathRole(b *KmipBackend) *framework.Path {
-	return &framework.Path{
-		Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)?$",
+func pathRole(b *KmipBackend) []*framework.Path {
+	return []*framework.Path{
+		{
+			Pattern: "scope/(?P<scope>[^/]+)/role",
 
-		DisplayAttrs: &framework.DisplayAttributes{
-			OperationPrefix: "kmip",
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
+			},
+
+			TakesArbitraryInput: true,
+			Fields: map[string]*framework.FieldSchema{
+				"scope": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+			},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Callback: b.handleRoleList(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "list",
+					},
+				},
+			},
+
+			ExistenceCheck: b.handleRoleExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
 		},
+		{
+			Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)?$",
 
-		TakesArbitraryInput: true,
-		Fields: map[string]*framework.FieldSchema{
-			"scope": {
-				Type:        framework.TypeString,
-				Description: "The action of the scope\n\n",
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
 			},
-			"role": {
-				Type:        framework.TypeString,
-				Description: "The action of the role\n\n",
+
+			TakesArbitraryInput: true,
+			Fields: map[string]*framework.FieldSchema{
+				"scope": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+				"role": {
+					Type:        framework.TypeString,
+					Description: "The action of the role\n\n",
+				},
 			},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.UpdateOperation: &framework.PathOperation{
+					Callback: b.handleRoleWrite(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "write",
+					},
+					Responses: map[int][]framework.Response{
+						http.StatusNoContent: {{
+							Description: http.StatusText(http.StatusNoContent),
+						}},
+					},
+				},
+				logical.ReadOperation: &framework.PathOperation{
+					Callback: b.handleRoleRead(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "read",
+					},
+					Responses: map[int][]framework.Response{
+						http.StatusNoContent: {{
+							Description: http.StatusText(http.StatusNoContent),
+						}},
+					},
+				},
+			},
+
+			ExistenceCheck: b.handleRoleExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
 		},
-		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.UpdateOperation: &framework.PathOperation{
-				Callback: b.handleRoleWrite(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "write",
-				},
-				Responses: map[int][]framework.Response{
-					http.StatusNoContent: {{
-						Description: http.StatusText(http.StatusNoContent),
-					}},
-				},
-			},
-			logical.ReadOperation: &framework.PathOperation{
-				Callback: b.handleRoleRead(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "write",
-				},
-				Responses: map[int][]framework.Response{
-					http.StatusNoContent: {{
-						Description: http.StatusText(http.StatusNoContent),
-					}},
-				},
-			},
-			logical.ListOperation: &framework.PathOperation{
-				Callback: b.handleRoleList(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "read",
-				},
-			},
-		},
-
-		ExistenceCheck: b.handleRoleExistenceCheck(),
-
-		HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
-		HelpDescription: strings.TrimSpace(KmipHelpDescription),
 	}
 }
 

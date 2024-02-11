@@ -60,9 +60,9 @@ func backend() *KmipBackend {
 			[]*framework.Path{
 				pathConfig(b),
 				pathCa(b),
-				pathScope(b),
-				pathRole(b),
 			},
+			pathScope(b),
+			pathRole(b),
 			pathCredentials(b),
 		),
 		Secrets: []*framework.Secret{},
@@ -134,13 +134,13 @@ func listStorage(ctx context.Context, req *logical.Request, key string) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	var d []string
-	for _, k := range keys {
-		if !strings.ContainsAny(k, "/") {
-			d = append(d, k)
-		}
-	}
-	return d, nil
+	//var d []string
+	//for _, k := range keys {
+	//	if !strings.ContainsAny(k, "/") {
+	//		d = append(d, k)
+	//	}
+	//}
+	return keys, nil
 }
 
 func writeStorage(ctx context.Context, req *logical.Request, key string, data map[string]interface{}) error {

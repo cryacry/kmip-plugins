@@ -2,7 +2,6 @@ package kmipengine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -16,40 +15,65 @@ type Scope struct {
 	Roles map[string]*Role
 }
 
-func pathScope(b *KmipBackend) *framework.Path {
-	return &framework.Path{
-		Pattern: "scope/(?P<scope>[^/]+)$",
+func pathScope(b *KmipBackend) []*framework.Path {
+	return []*framework.Path{
+		{
+			Pattern: "scope",
 
-		DisplayAttrs: &framework.DisplayAttributes{
-			OperationPrefix: "kmip",
-		},
-
-		TakesArbitraryInput: true,
-		Fields: map[string]*framework.FieldSchema{
-			"scope": {
-				Type:        framework.TypeString,
-				Description: "The action of the scope\n\n",
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
 			},
-		},
-		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.CreateOperation: &framework.PathOperation{
-				Callback: b.handleScopeCreate(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "write",
+
+			TakesArbitraryInput: true,
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.ListOperation: &framework.PathOperation{
+					Callback: b.handleScopeList(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "read",
+					},
 				},
 			},
-			logical.ListOperation: &framework.PathOperation{
-				Callback: b.handleScopeList(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "read",
+
+			ExistenceCheck: b.handleListScopeExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
+		},
+		{
+			Pattern: "scope/(?P<scope>[^/]+)$",
+
+			DisplayAttrs: &framework.DisplayAttributes{
+				OperationPrefix: "kmip",
+			},
+
+			TakesArbitraryInput: true,
+			Fields: map[string]*framework.FieldSchema{
+				"scope": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
 				},
 			},
+			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.CreateOperation: &framework.PathOperation{
+					Callback: b.handleScopeCreate(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "write",
+					},
+				},
+			},
+
+			ExistenceCheck: b.handleScopeExistenceCheck(),
+
+			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
+			HelpDescription: strings.TrimSpace(KmipHelpDescription),
 		},
+	}
+}
 
-		ExistenceCheck: b.handleScopeExistenceCheck(),
-
-		HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
-		HelpDescription: strings.TrimSpace(KmipHelpDescription),
+func (b *KmipBackend) handleListScopeExistenceCheck() framework.ExistenceFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+		b.once.Do(func() { b.init(ctx, req) })
+		return true, nil
 	}
 }
 
@@ -72,25 +96,14 @@ func (b *KmipBackend) handleScopeList() framework.OperationFunc {
 		// Right now we only handle directories, so ensure it ends with /; however,
 		// some physical backends may not handle the "/" case properly, so only add
 		// it if we're not listing the root
-		path := data.Get("scope").(string)
-		if path != "" && !strings.HasSuffix(path, "/") {
-			path = path + "/"
-		}
 
 		// List the keys at the prefix given by the request
-		keys, err := req.Storage.List(ctx, path)
-		var d []string
-		for _, k := range keys {
-			if !strings.ContainsAny(k, "/") {
-				d = append(d, k)
-			}
-		}
+		keys, err := listStorage(ctx, req, "scope/")
 		if err != nil {
 			return nil, err
 		}
-
 		// Generate the response
-		return logical.ListResponse(d), nil
+		return logical.ListResponse(keys), nil
 	}
 }
 
@@ -111,17 +124,7 @@ func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
 		d := map[string]interface{}{
 			"create_time": time.Now().String(),
 		}
-		buf, err := json.Marshal(d)
-		if err != nil {
-			return nil, fmt.Errorf("json encoding failed: %w", err)
-		}
-
-		// Write out a new key
-		entry := &logical.StorageEntry{
-			Key:   key,
-			Value: buf,
-		}
-		if err := req.Storage.Put(ctx, entry); err != nil {
+		if err := writeStorage(ctx, req, key, d); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
 		//kvEvent(ctx, b.Backend, "write", key, key, true, 1)
