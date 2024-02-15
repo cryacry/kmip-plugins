@@ -3,22 +3,20 @@ package kmipengine
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"net/http"
 	"strings"
-	"sync"
 )
 
 type Role struct {
-	L *sync.RWMutex
-	//Operation        map[operation]bool
+	//L                *sync.RWMutex     `json:"-"`
+	Operations       []operation       `json:"operations"`
 	TlsClientKeyBits int               `json:"tls_client_key_bits"`
 	TlsClientKeyTTL  string            `json:"tls_client_key_ttl"`
 	TlsClientKeyType Tls_key_type      `json:"tls_client_key_type"`
 	Cert             *x509.Certificate `json:"cert"`
-	SerialNumber     string            `json:"serial_number "`
 }
 
 func pathRole(b *KmipBackend) []*framework.Path {
@@ -46,7 +44,7 @@ func pathRole(b *KmipBackend) []*framework.Path {
 				},
 			},
 
-			ExistenceCheck: b.handleRoleExistenceCheck(),
+			ExistenceCheck: b.handleRoleListExistenceCheck(),
 
 			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
 			HelpDescription: strings.TrimSpace(KmipHelpDescription),
@@ -70,26 +68,22 @@ func pathRole(b *KmipBackend) []*framework.Path {
 				},
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
+				logical.CreateOperation: &framework.PathOperation{
+					Callback: b.handleRoleCreate(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "create",
+					},
+				},
 				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.handleRoleWrite(),
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb: "write",
-					},
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
 					},
 				},
 				logical.ReadOperation: &framework.PathOperation{
 					Callback: b.handleRoleRead(),
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb: "read",
-					},
-					Responses: map[int][]framework.Response{
-						http.StatusNoContent: {{
-							Description: http.StatusText(http.StatusNoContent),
-						}},
 					},
 				},
 			},
@@ -99,6 +93,12 @@ func pathRole(b *KmipBackend) []*framework.Path {
 			HelpSynopsis:    strings.TrimSpace(KmipHelpSynopsis),
 			HelpDescription: strings.TrimSpace(KmipHelpDescription),
 		},
+	}
+}
+
+func (b *KmipBackend) handleRoleListExistenceCheck() framework.ExistenceFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+		return true, nil
 	}
 }
 
@@ -118,10 +118,50 @@ func (b *KmipBackend) handleRoleExistenceCheck() framework.ExistenceFunc {
 		if err != nil {
 			return false, fmt.Errorf("role existence check err: %s : %s -- %w", scope, role, err)
 		}
-		if out != nil {
-			b.once.Do(func() { b.init(ctx, req) })
+		return out != nil, nil
+	}
+}
+
+func (b *KmipBackend) handleRoleCreate() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		scopeName := data.Get("scope").(string)
+		roleName := data.Get("role").(string)
+		//Check that some fields are given
+		if len(req.Data) == 0 {
+			return logical.ErrorResponse("missing data fields"), nil
 		}
-		return true, nil
+
+		// new role
+		role := new(Role)
+		// load default config
+		config := new(Config)
+		if err := config.readStorage(ctx, req); err != nil {
+			return nil, err
+		}
+		role.TlsClientKeyBits = config.DefaultTLSClientKeyBits
+		role.TlsClientKeyType = config.DefaultTLSClientKeyType
+		role.TlsClientKeyTTL = config.DefaultTLSClientTTL
+		// set req config
+		if _, ok := req.Data["tls_client_key_bits"]; ok {
+			role.TlsClientKeyBits = req.Data["tls_client_key_bits"].(int)
+		}
+		if _, ok := req.Data["tls_client_key_type"]; ok {
+			role.TlsClientKeyType = req.Data["tls_client_key_type"].(Tls_key_type)
+		}
+		if _, ok := req.Data["tls_client_key_ttl"]; ok {
+			role.TlsClientKeyTTL = req.Data["tls_client_key_ttl"].(string)
+		}
+
+		for i, k := range Operations {
+			if _, ok := req.Data[k]; ok {
+				role.Operations = append(role.Operations, i)
+			}
+		}
+
+		if err := role.writeStorage(ctx, req, scopeName, roleName); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}
 }
 
@@ -129,50 +169,32 @@ func (b *KmipBackend) handleRoleWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		scopeName := data.Get("scope").(string)
 		roleName := data.Get("role").(string)
-		key := "scope/" + scopeName + "/role/" + roleName
-		newRole := false
 		//Check that some fields are given
 		if len(req.Data) == 0 {
 			return logical.ErrorResponse("missing data fields"), nil
 		}
 
-		scope, ok := b.scopes[scopeName]
-		if !ok {
-			return nil, fmt.Errorf("no scope")
-		}
-		role, ok := scope.Roles[roleName]
-		if !ok {
-			// new role
-			newRole = true
-			role = new(Role)
-			role.L = new(sync.RWMutex)
-			scope.Roles[roleName] = role
-		}
-		role.L.Lock()
-		if newRole {
-			role.TlsClientKeyBits = b.config.DefaultTLSClientKeyBits
-			role.TlsClientKeyType = b.config.DefaultTLSClientKeyType
-			role.TlsClientKeyTTL = b.config.DefaultTLSClientTTL
-		}
-		// update tls config
-		if _, ok := req.Data["tls_client_key_bits"]; !ok {
-			req.Data["tls_client_key_bits"] = role.TlsClientKeyBits
-		} else {
+		role := new(Role)
+		// read role config
+		role.readStorage(ctx, req, scopeName, roleName)
+		// set req config
+		if _, ok := req.Data["tls_client_key_bits"]; ok {
 			role.TlsClientKeyBits = req.Data["tls_client_key_bits"].(int)
 		}
-		if _, ok := req.Data["tls_client_key_type"]; !ok {
-			req.Data["tls_client_key_type"] = role.TlsClientKeyType
-		} else {
+		if _, ok := req.Data["tls_client_key_type"]; ok {
 			role.TlsClientKeyType = req.Data["tls_client_key_type"].(Tls_key_type)
 		}
-		if _, ok := req.Data["tls_client_ttl"]; !ok {
-			req.Data["tls_client_ttl"] = role.TlsClientKeyTTL
-		} else {
-			role.TlsClientKeyTTL = req.Data["tls_client_ttl"].(string)
+		if _, ok := req.Data["tls_client_key_ttl"]; ok {
+			role.TlsClientKeyTTL = req.Data["tls_client_key_ttl"].(string)
 		}
-		role.L.Unlock()
 
-		if err := writeStorage(ctx, req, key, req.Data); err != nil {
+		for i, k := range Operations {
+			if _, ok := req.Data[k]; ok {
+				role.Operations = append(role.Operations, i)
+			}
+		}
+
+		if err := role.writeStorage(ctx, req, scopeName, roleName); err != nil {
 			return nil, err
 		}
 
@@ -182,15 +204,18 @@ func (b *KmipBackend) handleRoleWrite() framework.OperationFunc {
 
 func (b *KmipBackend) handleRoleRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		scope := data.Get("scope").(string)
-		role := data.Get("role").(string)
-		path := "scope/" + scope + "/role/" + role
+		scopeName := data.Get("scope").(string)
+		roleName := data.Get("role").(string)
 
-		rawData, err := readStorage(ctx, req, path)
-		if err != nil {
+		role := new(Role)
+
+		if err := role.readStorage(ctx, req, scopeName, roleName); err != nil {
 			return nil, err
 		}
-
+		rawData, err := role.responseFormat()
+		if err != nil {
+			return nil, fmt.Errorf("json encoding failed: %w", err)
+		}
 		resp := &logical.Response{
 			Secret: &logical.Secret{},
 			Data:   rawData,
@@ -214,4 +239,46 @@ func (b *KmipBackend) handleRoleList() framework.OperationFunc {
 		// Generate the response
 		return logical.ListResponse(d), nil
 	}
+}
+
+func (r *Role) readStorage(ctx context.Context, req *logical.Request, scope, role string) error {
+	path := "scope/" + scope + "/role/" + role
+	data, err := readStorage(ctx, req, path)
+	if err != nil {
+		return err
+	}
+	if err := MapToStruct(data, r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Role) writeStorage(ctx context.Context, req *logical.Request, scope, role string) error {
+	path := "scope/" + scope + "/role/" + role
+	buf, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("json encoding failed: %w", err)
+	}
+	// Write out a new key
+	entry := &logical.StorageEntry{
+		Key:   path,
+		Value: buf,
+	}
+	if err := req.Storage.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write: %w", err)
+	}
+	return nil
+}
+
+func (r *Role) responseFormat() (map[string]interface{}, error) {
+	rawData, err := structToMapWithJsonTags(*r)
+	if err != nil {
+		return nil, fmt.Errorf("json encoding failed: %w", err)
+	}
+	delete(rawData, "cert")
+	delete(rawData, "operations")
+	for _, k := range r.Operations {
+		rawData[Operations[k]] = true
+	}
+	return rawData, nil
 }
