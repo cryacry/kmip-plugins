@@ -7,9 +7,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"math/big"
 	"strings"
-	"sync"
 )
 
 // Factory returns a new backend as logical.Backend
@@ -21,37 +19,14 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 	return b, nil
 }
 
-type kmip struct {
-	// CA number
-	SerialNumber CASerialNumber
-	// kmip config information
-	config Config
-	// root ca chain
-	rootCA []*CA
-	// scope and role information
-	scopes map[string]*Scope
-}
-
 // KmipBackend is used storing secrets directly into the physical
 // backend.
 type KmipBackend struct {
 	*framework.Backend
-	once sync.Once
-	*kmip
 }
 
 func backend() *KmipBackend {
-	b := &KmipBackend{
-		kmip: &kmip{
-			SerialNumber: CASerialNumber{
-				L:  new(sync.RWMutex),
-				SN: big.NewInt(0),
-			},
-			config: Config{},
-			rootCA: []*CA{},
-			scopes: make(map[string]*Scope),
-		},
-	}
+	b := &KmipBackend{}
 	backend := &framework.Backend{
 		BackendType: logical.TypeLogical,
 		Help:        strings.TrimSpace(KmipHelp),
@@ -73,49 +48,13 @@ func backend() *KmipBackend {
 	return b
 }
 
-// read data from path
-func (b *KmipBackend) init(ctx context.Context, req *logical.Request) {
-	var data map[string]interface{}
-	var err error
-	data, err = readStorage(ctx, req, configPath)
-	if err == nil {
-		MapToStruct(data, &b.config)
-	}
-	data, err = readStorage(ctx, req, caPath)
-	if err == nil {
-		MapToStruct(data, &b.rootCA)
-	}
-
-	scopes, err := listStorage(ctx, req, "scope/")
-	if err == nil {
-		for _, k := range scopes {
-			b.scopes[k] = new(Scope)
-			roles, err := listStorage(ctx, req, fmt.Sprintf("scope/%s/role/", k))
-			if err != nil {
-				continue
-			}
-			for _, m := range roles {
-				role, err := readStorage(ctx, req, fmt.Sprintf("scope/%s/role/%s", k, m))
-				if err != nil {
-					continue
-				}
-				r := new(Role)
-				MapToStruct(role, r)
-				b.scopes[k].Roles[m] = r
-			}
-		}
-	}
-	data, err = readStorage(ctx, req, serialNumberPath)
-	if err == nil {
-		MapToStruct(data, &b.SerialNumber)
-	}
-
-}
-
 func readStorage(ctx context.Context, req *logical.Request, key string) (map[string]interface{}, error) {
 	out, err := req.Storage.Get(ctx, key)
 	if err != nil {
 		return nil, err
+	}
+	if out == nil {
+		return nil, fmt.Errorf(errPathDataIsEmpty)
 	}
 	// Fast-path the no data case
 	var data map[string]interface{}
