@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/vault/helper/namespace"
-	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"net/http"
 	"strings"
 	"time"
@@ -50,7 +49,7 @@ func pathConfig(b *KmipBackend) *framework.Path {
 
 		Operations: map[logical.Operation]framework.OperationHandler{
 			logical.CreateOperation: &framework.PathOperation{
-				Callback: b.handleConfigWrite(),
+				Callback: b.handleConfigCreate(),
 				DisplayAttrs: &framework.DisplayAttributes{
 					OperationVerb: "write",
 				},
@@ -94,13 +93,9 @@ func pathConfig(b *KmipBackend) *framework.Path {
 func (b *KmipBackend) handleConfigExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		key := configPath
-
 		out, err := req.Storage.Get(ctx, key)
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
-		}
-		if out != nil {
-			b.once.Do(func() { b.init(ctx, req) })
 		}
 		return out != nil, nil
 	}
@@ -121,9 +116,8 @@ func (b *KmipBackend) handleConfigRead() framework.OperationFunc {
 
 }
 
-func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
+func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		key := configPath
 		ns, err := namespace.FromContext(ctx)
 		if err != nil {
 			return nil, err
@@ -132,18 +126,18 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		if len(req.Data) == 0 {
 			return logical.ErrorResponse("missing data fields"), nil
 		}
-		var conf map[string]interface{}
-		out, err := req.Storage.Get(ctx, key)
-		// Fast-path the no data case
-		if out == nil {
-			// load default config
-			conf = DefaultConfigMap()
-		} else {
-			// load config from storage
-			if err := jsonutil.DecodeJSON(out.Value, &conf); err != nil {
-				return nil, fmt.Errorf("json decoding failed: %w", err)
+
+		// load default config
+		conf := DefaultConfigMap()
+		// update config
+		for i := range conf {
+			if data, ok := req.Data[i]; ok {
+				conf[i] = data
 			}
 		}
+		var config Config
+		MapToStruct(conf, &config)
+
 		// Determine if it is necessary to regenerate the CA certificate
 		newCA := false
 		if _, ok := req.Data[CAType]; ok {
@@ -152,14 +146,6 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		if _, ok := req.Data[CABits]; ok {
 			newCA = true
 		}
-		// update config
-		for i := range conf {
-			if data, ok := req.Data[i]; ok {
-				conf[i] = data
-			}
-		}
-		// update cache
-		MapToStruct(conf, &b.config)
 
 		// update caCert
 		{
@@ -169,31 +155,19 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 				goto setConfig
 			}
 			// set new CA-Cert
-			// 1、更新根证书链
-			_, rootCert := b.SetCACert("root", "root", "1000h", ns)
-			rootCertBytes, rootPrivateKey, err := CaGenerate(b.config.TLSCAKeyType, b.config.TLSCAKeyBits, rootCert)
+			// 1、Update root certificate chain
+			s := new(SerialNumber)
+			s.readStorage(ctx, req)
+			rootCert := SetCACert("root", "root", "1000h", ns, s)
+			rootCertBytes, rootPrivateKey, err := CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert)
 			if err != nil {
 				return nil, err
 			}
-			_, childCert := b.SetCACert("rootChildCA", "root", "1000h", ns)
-			childCertBytes, childPrivateKey, err := ChildCaGenerate(b.config.TLSCAKeyType, b.config.TLSCAKeyBits, rootCert, childCert, rootPrivateKey)
+			s.readStorage(ctx, req)
+			childCert := SetCACert("rootChildCA", "root", "1000h", ns, s)
+			childCertBytes, childPrivateKey, err := ChildCaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert, childCert, rootPrivateKey)
 			if err != nil {
 				return nil, err
-			}
-
-			// update SerialNumber
-			buf, err := json.Marshal(b.SerialNumber)
-			if err != nil {
-				return nil, fmt.Errorf("json encoding failed: %w", err)
-			}
-
-			// Write out a new config
-			entry := &logical.StorageEntry{
-				Key:   serialNumberPath,
-				Value: buf,
-			}
-			if err := req.Storage.Put(ctx, entry); err != nil {
-				return nil, fmt.Errorf("failed to write: %w", err)
 			}
 
 			rootPEM, err := CertPEM(rootCertBytes)
@@ -204,55 +178,182 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 			if err != nil {
 				return nil, err
 			}
-			// add in cache
-			b.addRootCAChain(-1, rootPEM, rootCertBytes, rootCert, rootPrivateKey)
-			b.addRootCAChain(-1, childPEM, childCertBytes, childCert, childPrivateKey)
-			// update CA Chain
-			buf, err = json.Marshal(b.rootCA)
-			if err != nil {
-				return nil, fmt.Errorf("json encoding failed: %w", err)
-			}
-			// Write out a new config
-			entry = &logical.StorageEntry{
-				Key:   caPath,
-				Value: buf,
-			}
-			if err := req.Storage.Put(ctx, entry); err != nil {
-				return nil, fmt.Errorf("failed to write: %w", err)
-			}
 
-			// 2、更新所有空间下的所有角色的证书
-			for scopeName, scopes := range b.scopes {
-				for roleName, roleConf := range scopes.Roles {
-					key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
-					// Generate Cert
-					CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
-					// PEM format
-					certificate, err := CertPEM(CertBytes)
-					if err != nil {
-						continue
-					}
-					data := map[string]interface{}{
-						"ca_chain":      []string{b.rootCA[0].CertPEM, b.rootCA[1].CertPEM},
-						"certificate":   certificate,
-						"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
-						"serial_number": roleConf.SerialNumber,
-					}
-					// write credential information
-					if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
-						return nil, fmt.Errorf("failed to write: %w", err)
-					}
+			var ca CA
+			ca.setCA(rootPEM, rootCertBytes, rootCert, rootPrivateKey, nil)
+			ca.writeStorage(ctx, req, caPath)
+			ca.setCA(childPEM, childCertBytes, childCert, childPrivateKey, rootCert.SerialNumber)
+			ca.writeStorage(ctx, req, caPath)
 
-				}
-			}
+			// 2、Update certificates for all roles in all spaces
+			//for scopeName, scopes := range b.scopes {
+			//	for roleName, roleConf := range scopes.Roles {
+			//		key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
+			//		// Generate Cert
+			//		CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
+			//		// PEM format
+			//		certificate, err := CertPEM(CertBytes)
+			//		if err != nil {
+			//			continue
+			//		}
+			//		data := map[string]interface{}{
+			//			"ca_chain":      []string{b.rootCA[0].CertPEM, b.rootCA[1].CertPEM},
+			//			"certificate":   certificate,
+			//			"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
+			//			"serial_number": roleConf.SerialNumber,
+			//		}
+			//		// write credential information
+			//		if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
+			//			return nil, fmt.Errorf("failed to write: %w", err)
+			//		}
+			//
+			//	}
+			//}
 		}
 
 	setConfig:
-		if err := writeStorage(ctx, req, key, conf); err != nil {
+		if err := config.writeStorage(ctx, req); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
 		return nil, nil
 	}
+}
+
+func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		ns, err := namespace.FromContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// Check that some fields are given
+		if len(req.Data) == 0 {
+			return logical.ErrorResponse("missing data fields"), nil
+		}
+
+		// load config
+		var config Config
+		if err := config.readStorage(ctx, req); err != nil {
+			return nil, err
+		}
+		conf, err := structToMapWithJsonTags(config)
+		if err != nil {
+			return nil, err
+		}
+		// update config
+		for i := range conf {
+			if data, ok := req.Data[i]; ok {
+				conf[i] = data
+			}
+		}
+		MapToStruct(conf, &config)
+
+		// Determine if it is necessary to regenerate the CA certificate
+		newCA := false
+		if _, ok := req.Data[CAType]; ok {
+			newCA = true
+		}
+		if _, ok := req.Data[CABits]; ok {
+			newCA = true
+		}
+
+		// update caCert
+		{
+			out, err := req.Storage.Get(ctx, caPath)
+			if err != nil && out != nil && newCA == false {
+				// CA exists and does not need to be updated
+				goto setConfig
+			}
+			// set new CA-Cert
+			// 1、Update root certificate chain
+			s := new(SerialNumber)
+			s.readStorage(ctx, req)
+			rootCert := SetCACert("root", "root", "1000h", ns, s)
+			rootCertBytes, rootPrivateKey, err := CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert)
+			if err != nil {
+				return nil, err
+			}
+			s.readStorage(ctx, req)
+			childCert := SetCACert("rootChildCA", "root", "1000h", ns, s)
+			childCertBytes, childPrivateKey, err := ChildCaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert, childCert, rootPrivateKey)
+			if err != nil {
+				return nil, err
+			}
+
+			rootPEM, err := CertPEM(rootCertBytes)
+			if err != nil {
+				return nil, err
+			}
+			childPEM, err := CertPEM(childCertBytes)
+			if err != nil {
+				return nil, err
+			}
+
+			var ca CA
+			ca.setCA(rootPEM, rootCertBytes, rootCert, rootPrivateKey, nil)
+			ca.writeStorage(ctx, req, caPath)
+			ca.setCA(childPEM, childCertBytes, childCert, childPrivateKey, rootCert.SerialNumber)
+			ca.writeStorage(ctx, req, caPath)
+
+			// 2、Update certificates for all roles in all spaces
+			//for scopeName, scopes := range b.scopes {
+			//	for roleName, roleConf := range scopes.Roles {
+			//		key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
+			//		// Generate Cert
+			//		CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
+			//		// PEM format
+			//		certificate, err := CertPEM(CertBytes)
+			//		if err != nil {
+			//			continue
+			//		}
+			//		data := map[string]interface{}{
+			//			"ca_chain":      []string{b.rootCA[0].CertPEM, b.rootCA[1].CertPEM},
+			//			"certificate":   certificate,
+			//			"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
+			//			"serial_number": roleConf.SerialNumber,
+			//		}
+			//		// write credential information
+			//		if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
+			//			return nil, fmt.Errorf("failed to write: %w", err)
+			//		}
+			//
+			//	}
+			//}
+		}
+
+	setConfig:
+		if err := config.writeStorage(ctx, req); err != nil {
+			return nil, fmt.Errorf("failed to write: %w", err)
+		}
+		return nil, nil
+	}
+}
+
+func (c *Config) readStorage(ctx context.Context, req *logical.Request) error {
+	data, err := readStorage(ctx, req, configPath)
+	if err != nil {
+		return err
+	}
+	if err := MapToStruct(data, c); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) writeStorage(ctx context.Context, req *logical.Request) error {
+	buf, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("json encoding failed: %w", err)
+	}
+
+	// Write out a new key
+	entry := &logical.StorageEntry{
+		Key:   configPath,
+		Value: buf,
+	}
+	if err := req.Storage.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write: %w", err)
+	}
+	return nil
 }
 
 func DefaultConfigMap() map[string]interface{} {
@@ -292,32 +393,5 @@ func DefaultConfigMap() map[string]interface{} {
 //		//kvEvent(ctx, b.Backend, "delete", key, "", true, 1)
 //
 //		return nil, nil
-//	}
-//}
-//
-//func (b *KmipBackend) handleList() framework.OperationFunc {
-//	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-//		// Right now we only handle directories, so ensure it ends with /; however,
-//		// some physical backends may not handle the "/" case properly, so only add
-//		// it if we're not listing the root
-//		path := data.Get("path").(string)
-//		if path != "" && !strings.HasSuffix(path, "/") {
-//			path = path + "/"
-//		}
-//
-//		// List the keys at the prefix given by the request
-//		keys, err := req.Storage.List(ctx, path)
-//		var d []string
-//		for _, k := range keys {
-//			if !strings.ContainsAny(k, "/") {
-//				d = append(d, k)
-//			}
-//		}
-//		if err != nil {
-//			return nil, err
-//		}
-//
-//		// Generate the response
-//		return logical.ListResponse(d), nil
 //	}
 //}
