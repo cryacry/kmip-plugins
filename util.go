@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"reflect"
 )
 
 func CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, ca *x509.Certificate) ([]byte, interface{}, error) {
@@ -158,4 +159,48 @@ func MapToStruct(data map[string]interface{}, result interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func structToMapWithJsonTags(input interface{}) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	val := reflect.ValueOf(input)
+	if val.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("input is not a struct")
+	}
+
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldName := typ.Field(i).Name
+
+		// 使用 JSON 标签作为 map 中的键
+		jsonTag := typ.Field(i).Tag.Get("json")
+		if jsonTag != "" && jsonTag != "-" {
+			result[jsonTag] = field.Interface()
+		} else {
+			// 如果没有 JSON 标签，则使用字段名作为键
+			result[fieldName] = field.Interface()
+		}
+	}
+
+	return result, nil
+}
+
+func structToMap(input interface{}) (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+
+	val := reflect.ValueOf(input)
+	if val.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("input is not a struct")
+	}
+
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldName := typ.Field(i).Name
+		result[fieldName] = field.Interface()
+	}
+
+	return result, nil
 }
