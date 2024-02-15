@@ -50,9 +50,14 @@ const (
 	OperationSignatureVerify
 	OperationRngSeed
 	OperationRngRetrieve
+	OperationAll
 )
 
-var Operation = map[operation]string{
+const (
+	errPathDataIsEmpty = "path data is empty"
+)
+
+var Operations = map[operation]string{
 	OperationAddAttribute:     "operation_add_attribute",
 	OperationCreate:           "operation_create",
 	OperationCreateKeypair:    "operation_create_keypair",
@@ -78,6 +83,7 @@ var Operation = map[operation]string{
 	OperationSignatureVerify:  "operation_signature_verify",
 	OperationRngSeed:          "operation_rng_seed",
 	OperationRngRetrieve:      "operation_rng_retrieve",
+	OperationAll:              "operation_all",
 }
 
 type RoleCAConfig struct {
@@ -86,7 +92,7 @@ type RoleCAConfig struct {
 	TlsClientKeyType Tls_key_type `json:"tls_client_key_type"`
 }
 
-type CASerialNumber struct {
+type SerialNumber struct {
 	SN *big.Int
 	L  *sync.RWMutex
 }
