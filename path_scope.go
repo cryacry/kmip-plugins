@@ -72,7 +72,6 @@ func pathScope(b *KmipBackend) []*framework.Path {
 
 func (b *KmipBackend) handleListScopeExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
-		b.once.Do(func() { b.init(ctx, req) })
 		return true, nil
 	}
 }
@@ -83,9 +82,6 @@ func (b *KmipBackend) handleScopeExistenceCheck() framework.ExistenceFunc {
 		out, err := req.Storage.Get(ctx, key)
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
-		}
-		if out != nil {
-			b.once.Do(func() { b.init(ctx, req) })
 		}
 		return out != nil, nil
 	}
@@ -98,7 +94,7 @@ func (b *KmipBackend) handleScopeList() framework.OperationFunc {
 		// it if we're not listing the root
 
 		// List the keys at the prefix given by the request
-		keys, err := listStorage(ctx, req, "scope/")
+		keys, err := listStorage(ctx, req, "scope")
 		if err != nil {
 			return nil, err
 		}
@@ -126,11 +122,6 @@ func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
 		}
 		if err := writeStorage(ctx, req, key, d); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
-		}
-		//kvEvent(ctx, b.Backend, "write", key, key, true, 1)
-		b.scopes[scope] = &Scope{
-			L:     new(sync.RWMutex),
-			Roles: make(map[string]*Role),
 		}
 		return nil, nil
 	}
