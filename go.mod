@@ -1,4 +1,4 @@
-module github.com/hashicorp/vault-kmip-secrets-engine
+module github.com/cryacry/kmip-plugins/
 
 go 1.21
 
