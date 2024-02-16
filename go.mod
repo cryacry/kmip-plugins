@@ -1,4 +1,4 @@
-module github.com/cryacry/kmip-plugins/
+module github.com/cryacry/kmip-plugins
 
 go 1.21
 
