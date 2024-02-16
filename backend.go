@@ -73,12 +73,12 @@ func listStorage(ctx context.Context, req *logical.Request, key string) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	//var d []string
-	//for _, k := range keys {
-	//	if !strings.ContainsAny(k, "/") {
-	//		d = append(d, k)
-	//	}
-	//}
+	var d []string
+	for _, k := range keys {
+		if !strings.ContainsAny(k, "/") {
+			d = append(d, k)
+		}
+	}
 	return keys, nil
 }
 
