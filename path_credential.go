@@ -19,7 +19,16 @@ func pathCredentials(b *KmipBackend) []*framework.Path {
 			},
 
 			TakesArbitraryInput: true,
-			Fields:              map[string]*framework.FieldSchema{},
+			Fields: map[string]*framework.FieldSchema{
+				"scope": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+				"role": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+				},
+			},
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
 					Callback: b.handleCredentialList(),
@@ -46,12 +55,19 @@ func pathCredentials(b *KmipBackend) []*framework.Path {
 				"scope": {
 					Type:        framework.TypeString,
 					Description: "The action of the scope\n\n",
+					Required:    true,
 				},
 				"role": {
 					Type:        framework.TypeString,
 					Description: "The action of the scope\n\n",
+					Required:    true,
 				},
 				"action": {
+					Type:        framework.TypeString,
+					Description: "The action of the scope\n\n",
+					Required:    true,
+				},
+				"serial_number": {
 					Type:        framework.TypeString,
 					Description: "The action of the scope\n\n",
 				},
@@ -87,10 +103,10 @@ func (b *KmipBackend) handleCredentialExistenceCheck() framework.ExistenceFunc {
 
 func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		scopeName := data.Get("scopeName").(string)
-		roleName := data.Get("roleName").(string)
+		scopeName := data.Get("scope").(string)
+		roleName := data.Get("role").(string)
 		action := data.Get("action").(string)
-		key := fmt.Sprintf("scopeName/%s/roleName/%s/credential/", scopeName, roleName)
+		key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
 		switch action {
 		case "generate":
 			ns, _ := namespace.FromContext(ctx)
@@ -100,6 +116,7 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			if err != nil {
 				return nil, err
 			}
+			// Sort the root certificate serial number to obtain the end of the certificate chain
 			//i1 := new(big.Int)
 			//j1 := new(big.Int)
 			//sort.Slice(rootSN, func(i, j int) bool {
@@ -110,7 +127,7 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			ca := new(CA)
 			var caChain []string
 			for _, k := range rootSN {
-				if err := ca.readStorage(ctx, req, key, k); err != nil {
+				if err := ca.readStorage(ctx, req, caPath, k); err != nil {
 					return nil, err
 				}
 				caChain = append(caChain, ca.CertPEM)
@@ -132,26 +149,16 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			}
 
 			// set Cert information
-			cert := SetCACert(roleName, scopeName, role.TlsClientKeyTTL, ns, sn)
-			CertBytes, PrivateKey, err := ChildCaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, rootCA.Cert, cert, rootCA.PrivateKey)
-			if err != nil {
-				return nil, err
-			}
-			certificate, err := CertPEM(CertBytes)
-			if err != nil {
-				return nil, err
-			}
-
-			role.Cert = cert
 			childCA := new(CA)
-			childCA.setCA(certificate, CertBytes, cert, PrivateKey, rootCA.Cert.SerialNumber)
+			childCA.SetCACert(roleName, scopeName, role.TlsClientKeyTTL, ns, sn)
+			childCA.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, rootCA)
 			childCA.writeStorage(ctx, req, key)
 			//role.L.RLock()
 
 			data := map[string]interface{}{
 				"ca_chain":      caChain,
-				"certificate":   certificate,
-				"private_key":   PrivateKeyPEM(PrivateKey, role),
+				"certificate":   ca.CertPEM,
+				"private_key":   ca.PrivateKeyPEM(),
 				"serial_number": sn.SN.String(),
 			}
 			err = writeStorage(ctx, req, key+sn.SN.String()+"_resData", data)
@@ -184,6 +191,9 @@ func (b *KmipBackend) handleCredentialRead() framework.OperationFunc {
 		action := data.Get("action").(string)
 		if action != "lookup" {
 			return nil, fmt.Errorf("credential action error")
+		}
+		if _, ok := req.Data["serial_number"]; !ok {
+			return nil, fmt.Errorf("serial_number is required")
 		}
 		serialNumber := req.Data["serial_number"].(string)
 		path := fmt.Sprintf("scope/%s/role/%s/credential/%s_resData", scope, role, serialNumber)

@@ -158,32 +158,29 @@ func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
 			// 1、Update root certificate chain
 			s := new(SerialNumber)
 			s.readStorage(ctx, req)
-			rootCert := SetCACert("root", "root", "1000h", ns, s)
-			rootCertBytes, rootPrivateKey, err := CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert)
+			// rootCA
+			rootCA := new(CA)
+			rootCA.SetCACert("root", "root", "1000h", ns, s)
+			err = rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil)
 			if err != nil {
 				return nil, err
 			}
+			err = rootCA.writeStorage(ctx, req, caPath)
+			if err != nil {
+				return nil, err
+			}
+			// childCA
 			s.readStorage(ctx, req)
-			childCert := SetCACert("rootChildCA", "root", "1000h", ns, s)
-			childCertBytes, childPrivateKey, err := ChildCaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert, childCert, rootPrivateKey)
+			childCA := new(CA)
+			childCA.SetCACert("root", "root", "1000h", ns, s)
+			err = childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA)
 			if err != nil {
 				return nil, err
 			}
-
-			rootPEM, err := CertPEM(rootCertBytes)
+			err = childCA.writeStorage(ctx, req, caPath)
 			if err != nil {
 				return nil, err
 			}
-			childPEM, err := CertPEM(childCertBytes)
-			if err != nil {
-				return nil, err
-			}
-
-			var ca CA
-			ca.setCA(rootPEM, rootCertBytes, rootCert, rootPrivateKey, nil)
-			ca.writeStorage(ctx, req, caPath)
-			ca.setCA(childPEM, childCertBytes, childCert, childPrivateKey, rootCert.SerialNumber)
-			ca.writeStorage(ctx, req, caPath)
 
 			// 2、Update certificates for all roles in all spaces
 			//for scopeName, scopes := range b.scopes {
@@ -267,32 +264,29 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 			// 1、Update root certificate chain
 			s := new(SerialNumber)
 			s.readStorage(ctx, req)
-			rootCert := SetCACert("root", "root", "1000h", ns, s)
-			rootCertBytes, rootPrivateKey, err := CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert)
+			// rootCA
+			rootCA := new(CA)
+			rootCA.SetCACert("root", "root", "1000h", ns, s)
+			err = rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil)
 			if err != nil {
 				return nil, err
 			}
+			err = rootCA.writeStorage(ctx, req, caPath)
+			if err != nil {
+				return nil, err
+			}
+			// childCA
 			s.readStorage(ctx, req)
-			childCert := SetCACert("rootChildCA", "root", "1000h", ns, s)
-			childCertBytes, childPrivateKey, err := ChildCaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCert, childCert, rootPrivateKey)
+			childCA := new(CA)
+			childCA.SetCACert("root", "root", "1000h", ns, s)
+			err = childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA)
 			if err != nil {
 				return nil, err
 			}
-
-			rootPEM, err := CertPEM(rootCertBytes)
+			err = childCA.writeStorage(ctx, req, caPath)
 			if err != nil {
 				return nil, err
 			}
-			childPEM, err := CertPEM(childCertBytes)
-			if err != nil {
-				return nil, err
-			}
-
-			var ca CA
-			ca.setCA(rootPEM, rootCertBytes, rootCert, rootPrivateKey, nil)
-			ca.writeStorage(ctx, req, caPath)
-			ca.setCA(childPEM, childCertBytes, childCert, childPrivateKey, rootCert.SerialNumber)
-			ca.writeStorage(ctx, req, caPath)
 
 			// 2、Update certificates for all roles in all spaces
 			//for scopeName, scopes := range b.scopes {

@@ -2,9 +2,14 @@ package kmipengine
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"github.com/hashicorp/vault/helper/namespace"
 	"math/big"
@@ -21,6 +26,23 @@ const (
 	serialNumberPath = "serial_number"
 )
 
+// RSAKey and ECDSAKey represent the private keys of RSA and ECDSA, respectively
+type RSAKey struct {
+	PrivateKey *rsa.PrivateKey `json:"private_key_rsa"`
+}
+
+type ECDSAKey struct {
+	PrivateKey *ecdsa.PrivateKey `json:"private_key_ecdsa"`
+}
+
+// PrivateKeyType is an interface for private key types
+type PrivateKeyType interface {
+	isPrivateKeyType() Tls_key_type
+}
+
+func (r *RSAKey) isPrivateKeyType() Tls_key_type   { return rsa_key_type }
+func (e *ECDSAKey) isPrivateKeyType() Tls_key_type { return ec_key_type }
+
 // hashiCupsConfig includes the minimum configuration
 // required to instantiate a new HashiCups client.
 type CA struct {
@@ -29,7 +51,8 @@ type CA struct {
 	CertPEM    string            `json:"cert_pem"`
 	CertBytes  []byte            `json:"cert_bytes"`
 	Cert       *x509.Certificate `json:"cert"`
-	PrivateKey interface{}       `json:"private_key"`
+	//PrivateKey interface{}       `json:"private_key"`
+	PrivateKey PrivateKeyType `json:"private_key"`
 }
 
 // pathConfig extends the Vault API with a `/config`
@@ -104,7 +127,7 @@ func (b *KmipBackend) handleCARead() framework.OperationFunc {
 
 }
 
-func (c *CA) setCA(certPEM string, certBytes []byte, cert *x509.Certificate, privateKey interface{}, sn *big.Int) {
+func (c *CA) setCA(certPEM string, certBytes []byte, cert *x509.Certificate, privateKey PrivateKeyType, sn *big.Int) {
 	c.Cert = cert
 	c.CertPEM = certPEM
 	c.PrivateKey = privateKey
@@ -122,13 +145,32 @@ func (c *CA) readStorage(ctx context.Context, req *logical.Request, key string, 
 		path = path + "/"
 	}
 	path = path + sn
+
 	data, err := readStorage(ctx, req, path)
 	if err != nil {
 		return err
 	}
+
+	privateKeyData := data["private_key"].(map[string]interface{})
+	delete(data, "private_key")
+	if _, ok := privateKeyData["private_key_rsa"]; ok {
+		key := new(RSAKey)
+		if err := MapToStruct(privateKeyData, key); err != nil {
+			return err
+		}
+		c.PrivateKey = key
+	} else if _, ok := privateKeyData["private_key_ecdsa"]; ok {
+		key := new(RSAKey)
+		if err := MapToStruct(privateKeyData, key); err != nil {
+			return err
+		}
+		c.PrivateKey = key
+	}
+
 	if err := MapToStruct(data, c); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -152,9 +194,9 @@ func (c *CA) writeStorage(ctx context.Context, req *logical.Request, key string)
 	return nil
 }
 
-func SetCACert(role, scope, ttl string, ns *namespace.Namespace, sn *SerialNumber) *x509.Certificate {
+func (c *CA) SetCACert(role, scope, ttl string, ns *namespace.Namespace, sn *SerialNumber) {
 	duration, _ := time.ParseDuration(ttl)
-	rootCert := &x509.Certificate{
+	cert := &x509.Certificate{
 		SerialNumber: sn.SN,
 		Subject: pkix.Name{
 			CommonName:   role,                     // role
@@ -167,7 +209,93 @@ func SetCACert(role, scope, ttl string, ns *namespace.Namespace, sn *SerialNumbe
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-	return rootCert
+	c.Cert = cert
+}
+
+func (c *CA) PrivateKeyPEM() []byte {
+	var keyBytes []byte
+	var _type string
+	switch c.PrivateKey.isPrivateKeyType() {
+	case rsa_key_type:
+		privateKey := c.PrivateKey.(*RSAKey)
+		keyBytes = x509.MarshalPKCS1PrivateKey(privateKey.PrivateKey)
+		_type = "RSA PRIVATE KEY"
+	case ec_key_type:
+		privateKey := c.PrivateKey.(*ECDSAKey)
+		keyBytes, _ = x509.MarshalECPrivateKey(privateKey.PrivateKey)
+		_type = "EC PRIVATE KEY"
+	}
+
+	// 将私钥转换为 PEM 格式
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  _type,
+		Bytes: keyBytes,
+	})
+	return privateKeyPEM
+}
+
+func (c *CA) CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, parentCA *CA) error {
+
+	// Set certificate information
+	var CertBytes []byte
+	// Generate random private key
+	switch tlsCAKeyType {
+	case rsa_key_type:
+		privateKey, err := rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		// Generate certificate
+		if parentCA == nil {
+			CertBytes, err = x509.CreateCertificate(rand.Reader, c.Cert, c.Cert, &privateKey.PublicKey, privateKey)
+			c.ParentCaSn = ""
+		} else {
+			rootPrivateKey := parentCA.PrivateKey.(*RSAKey)
+			CertBytes, err = x509.CreateCertificate(rand.Reader, c.Cert, parentCA.Cert, &privateKey.PublicKey, rootPrivateKey.PrivateKey)
+			c.ParentCaSn = parentCA.Cert.SerialNumber.String()
+		}
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		c.CertPEM, err = CertPEM(CertBytes)
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		c.CertBytes = CertBytes
+		c.PrivateKey = &RSAKey{PrivateKey: privateKey}
+		return nil
+
+	case ec_key_type:
+		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		if parentCA == nil {
+			CertBytes, err = x509.CreateCertificate(rand.Reader, c.Cert, c.Cert, &privateKey.PublicKey, privateKey)
+			c.ParentCaSn = ""
+		} else {
+			rootPrivateKey := parentCA.PrivateKey.(*ECDSAKey)
+			CertBytes, err = x509.CreateCertificate(rand.Reader, c.Cert, parentCA.Cert, &privateKey.PublicKey, rootPrivateKey.PrivateKey)
+			c.ParentCaSn = parentCA.Cert.SerialNumber.String()
+		}
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		c.CertPEM, err = CertPEM(CertBytes)
+		if err != nil {
+			fmt.Println("Failed to create certificate:", err)
+			return err
+		}
+		c.CertBytes = CertBytes
+		c.PrivateKey = &ECDSAKey{PrivateKey: privateKey}
+		return nil
+	}
+	return fmt.Errorf("This type of certificate type is not supported")
 }
 
 func (sn *SerialNumber) readStorage(ctx context.Context, req *logical.Request) error {
