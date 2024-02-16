@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
+	kmip "github.com/cryacry/kmip-plugins"
 	"github.com/hashicorp/go-hclog"
-	kmip "github.com/hashicorp/vault-kmip-secrets-engine"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
 )
