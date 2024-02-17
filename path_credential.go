@@ -171,6 +171,9 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			return resp, nil
 		case "revoke":
 			// revoke certificate
+			if _, ok := req.Data["serial_number"]; !ok {
+				return nil, fmt.Errorf("serial_number is required")
+			}
 			serialNumber := req.Data["serial_number"].(string)
 			if err := req.Storage.Delete(ctx, key+serialNumber); err != nil {
 				return nil, fmt.Errorf("failed to write: %w", err)
