@@ -154,14 +154,14 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			childCA.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, rootCA)
 			childCA.writeStorage(ctx, req, key)
 			//role.L.RLock()
-
+			certSN := childCA.Cert.SerialNumber.String()
 			data := map[string]interface{}{
 				"ca_chain":      caChain,
-				"certificate":   ca.CertPEM,
-				"private_key":   ca.PrivateKeyPEM(),
-				"serial_number": sn.SN.String(),
+				"certificate":   childCA.CertPEM,
+				"private_key":   childCA.PrivateKeyPEM(),
+				"serial_number": certSN,
 			}
-			err = writeStorage(ctx, req, key+sn.SN.String()+"_resData", data)
+			err = writeStorage(ctx, req, key+certSN+"_resData", data)
 			if err != nil {
 				return nil, err
 			}
