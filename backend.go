@@ -79,7 +79,7 @@ func listStorage(ctx context.Context, req *logical.Request, key string) ([]strin
 			d = append(d, k)
 		}
 	}
-	return keys, nil
+	return d, nil
 }
 
 func writeStorage(ctx context.Context, req *logical.Request, key string, data map[string]interface{}) error {
