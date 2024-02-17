@@ -18,7 +18,7 @@ type Scope struct {
 func pathScope(b *KmipBackend) []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: "scope",
+			Pattern: "scope/?$",
 
 			DisplayAttrs: &framework.DisplayAttributes{
 				OperationPrefix: "kmip",

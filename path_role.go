@@ -22,7 +22,7 @@ type Role struct {
 func pathRole(b *KmipBackend) []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: "scope/(?P<scope>[^/]+)/role?$",
+			Pattern: "scope/(?P<scope>[^/]+)/role/?$",
 
 			DisplayAttrs: &framework.DisplayAttributes{
 				OperationPrefix: "kmip",

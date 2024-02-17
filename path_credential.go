@@ -12,7 +12,7 @@ import (
 func pathCredentials(b *KmipBackend) []*framework.Path {
 	return []*framework.Path{
 		{
-			Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)/credential",
+			Pattern: "scope/(?P<scope>[^/]+)/role/(?P<role>[^/]+)/credential/?$",
 
 			DisplayAttrs: &framework.DisplayAttributes{
 				OperationPrefix: "kmip",
