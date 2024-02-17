@@ -74,25 +74,17 @@ func TestRole(t *testing.T) {
 		err = testRoleList(t, b, reqStorage, scopes, roles)
 
 		assert.NoError(t, err)
+
+		err = testRoleDelete(t, b, reqStorage, scopes[0], roles[0])
+
+		assert.NoError(t, err)
+
+		err = testRoleList(t, b, reqStorage, scopes, roles[1:])
+
+		assert.NoError(t, err)
+
 	})
 }
-
-//func testConfigDelete(t *testing.T, b logical.Backend, s logical.Storage) error {
-//	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-//		Operation: logical.DeleteOperation,
-//		Path:      configStoragePath,
-//		Storage:   s,
-//	})
-//
-//	if err != nil {
-//		return err
-//	}
-//
-//	if resp != nil && resp.IsError() {
-//		return resp.Error()
-//	}
-//	return nil
-//}
 
 func testRoleCreate(t *testing.T, b logical.Backend, s logical.Storage, scopes, roles []string, d map[string]interface{}) error {
 	ctx := namespace.RootContext(nil)
@@ -216,6 +208,22 @@ func testRoleList(t *testing.T, b logical.Backend, s logical.Storage, scopes, ex
 
 	}
 
+	return nil
+}
+
+func testRoleDelete(t *testing.T, b logical.Backend, s logical.Storage, scope, role string) error {
+	ctx := namespace.RootContext(nil)
+	resp, err := b.HandleRequest(ctx, &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "scope/" + scope + "/role/" + role,
+		Storage:   s,
+	})
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.IsError() {
+		return resp.Error()
+	}
 	return nil
 }
 
