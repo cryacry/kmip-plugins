@@ -60,6 +60,12 @@ func pathScope(b *KmipBackend) []*framework.Path {
 						OperationVerb: "write",
 					},
 				},
+				logical.DeleteOperation: &framework.PathOperation{
+					Callback: b.handleScopeDelete(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "write",
+					},
+				},
 			},
 
 			ExistenceCheck: b.handleScopeExistenceCheck(),
@@ -122,6 +128,40 @@ func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
 		}
 		if err := writeStorage(ctx, req, key, d); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
+		}
+		return nil, nil
+	}
+}
+
+func (b *KmipBackend) handleScopeDelete() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		scopeName := data.Get("scope").(string)
+		scopePath := "scope/" + scopeName
+		flag := true // Allow deletion
+		roles, err := listStorage(ctx, req, scopePath+"/role")
+		if err != nil {
+			return nil, err
+		}
+		if len(roles) > 0 {
+			flag = false
+			// judge force parameter
+			if d, ok := req.Data["force"]; ok {
+				if d == "true" {
+					flag = true
+				}
+			}
+		}
+		if !flag {
+			return nil, fmt.Errorf("scope not empty, need force parameter")
+		}
+		for _, roleName := range roles {
+			if err := deleteRole(ctx, req, scopeName, roleName); err != nil {
+				return nil, err
+			}
+		}
+		// Delete the key at the request path
+		if err := req.Storage.Delete(ctx, scopePath); err != nil {
+			return nil, err
 		}
 		return nil, nil
 	}
