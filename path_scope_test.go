@@ -16,6 +16,13 @@ func TestScope(t *testing.T) {
 
 	scopes := []string{"aaa", "bbb", "ccc"}
 
+	roles := []string{"qq", "ww", "ee"}
+
+	d := map[string]interface{}{
+		"operation_add_attribute": true,
+		"operation_create":        true,
+	}
+
 	t.Run("Test Configuration", func(t *testing.T) {
 		err := testScopeCreate(t, b, reqStorage, scopes)
 
@@ -24,6 +31,30 @@ func TestScope(t *testing.T) {
 		err = testScopeList(t, b, reqStorage, scopes)
 
 		assert.NoError(t, err)
+
+		// create Role
+		err = testRoleWrite(t, b, reqStorage, scopes[0:2], roles, d)
+
+		assert.NoError(t, err)
+
+		err = testScopeDelete(t, b, reqStorage, scopes[0], map[string]interface{}{})
+
+		assert.NoError(t, err)
+
+		err = testScopeList(t, b, reqStorage, scopes)
+
+		assert.NoError(t, err)
+
+		err = testScopeDelete(t, b, reqStorage, scopes[0], map[string]interface{}{
+			"force": "true",
+		})
+
+		assert.NoError(t, err)
+
+		err = testScopeList(t, b, reqStorage, scopes[1:])
+
+		assert.NoError(t, err)
+
 	})
 }
 
@@ -97,6 +128,23 @@ func testScopeList(t *testing.T, b logical.Backend, s logical.Storage, expected 
 		if expected[i] != resData[i] {
 			return fmt.Errorf(`expected data["%d"] = %v, instead got %v"`, i, expected[i], resData[i])
 		}
+	}
+	return nil
+}
+
+func testScopeDelete(t *testing.T, b logical.Backend, s logical.Storage, scope string, d map[string]interface{}) error {
+	ctx := namespace.RootContext(nil)
+	resp, err := b.HandleRequest(ctx, &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      "scope/" + scope,
+		Data:      d,
+		Storage:   s,
+	})
+	if err != nil && err.Error() != errNeedForceParam {
+		return err
+	}
+	if resp != nil && resp.IsError() {
+		return resp.Error()
 	}
 	return nil
 }

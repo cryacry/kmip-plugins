@@ -152,7 +152,7 @@ func (b *KmipBackend) handleScopeDelete() framework.OperationFunc {
 			}
 		}
 		if !flag {
-			return nil, fmt.Errorf("scope not empty, need force parameter")
+			return nil, fmt.Errorf(errNeedForceParam)
 		}
 		for _, roleName := range roles {
 			if err := deleteRole(ctx, req, scopeName, roleName); err != nil {

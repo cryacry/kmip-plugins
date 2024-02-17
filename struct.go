@@ -55,6 +55,7 @@ const (
 
 const (
 	errPathDataIsEmpty = "path data is empty"
+	errNeedForceParam  = "scope not empty, need force parameter"
 )
 
 var Operations = map[operation]string{
