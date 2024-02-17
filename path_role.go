@@ -87,6 +87,12 @@ func pathRole(b *KmipBackend) []*framework.Path {
 						OperationVerb: "read",
 					},
 				},
+				logical.DeleteOperation: &framework.PathOperation{
+					Callback: b.handleRoleDelete(),
+					DisplayAttrs: &framework.DisplayAttributes{
+						OperationVerb: "delete",
+					},
+				},
 			},
 
 			ExistenceCheck: b.handleRoleExistenceCheck(),
@@ -242,6 +248,17 @@ func (b *KmipBackend) handleRoleList() framework.OperationFunc {
 	}
 }
 
+func (b *KmipBackend) handleRoleDelete() framework.OperationFunc {
+	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		scopeName := data.Get("scope").(string)
+		roleName := data.Get("role").(string)
+		if err := deleteRole(ctx, req, scopeName, roleName); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+}
+
 func (r *Role) readStorage(ctx context.Context, req *logical.Request, scope, role string) error {
 	path := "scope/" + scope + "/role/" + role
 	data, err := readStorage(ctx, req, path)
@@ -282,4 +299,30 @@ func (r *Role) responseFormat() (map[string]interface{}, error) {
 		rawData[Operations[k]] = true
 	}
 	return rawData, nil
+}
+
+func deleteRole(ctx context.Context, req *logical.Request, scope, role string) error {
+	rolePath := fmt.Sprintf("scope/%s/role/%s", scope, role)
+	credentialPath := rolePath + "/credential/"
+	sn, err := listStorage(ctx, req, credentialPath)
+	if err != nil {
+		return err
+	}
+	// delete role ca
+	for _, k := range sn {
+		key := fmt.Sprintf("scope/%s/role/%s/credential/%s", scope, role, k)
+		// Delete the key at the request path
+		if err := req.Storage.Delete(ctx, key); err != nil {
+			return err
+		}
+		// Delete the key at the request path
+		if err := req.Storage.Delete(ctx, key+"_resData"); err != nil {
+			return err
+		}
+	}
+	// Delete the key at the request path
+	if err := req.Storage.Delete(ctx, rolePath); err != nil {
+		return err
+	}
+	return nil
 }
