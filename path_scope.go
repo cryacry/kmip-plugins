@@ -6,14 +6,8 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 	"strings"
-	"sync"
 	"time"
 )
-
-type Scope struct {
-	L     *sync.RWMutex
-	Roles map[string]*Role
-}
 
 func pathScope(b *KmipBackend) []*framework.Path {
 	return []*framework.Path{
