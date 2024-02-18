@@ -138,77 +138,31 @@ func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
 		var config Config
 		MapToStruct(conf, &config)
 
-		// Determine if it is necessary to regenerate the CA certificate
-		newCA := false
-		if _, ok := req.Data[CAType]; ok {
-			newCA = true
-		}
-		if _, ok := req.Data[CABits]; ok {
-			newCA = true
-		}
+		// create root ca chain
+		rootCA := new(CA)
+		childCA := new(CA)
+		// set new CA-Cert
+		s := new(SerialNumber)
+		s.readStorage(ctx, req)
+		rootCA.SetCACert("root", "root", "1000h", ns, s)
+		s.readStorage(ctx, req)
+		childCA.SetCACert("root", "root", "1000h", ns, s)
 
-		// update caCert
-		{
-			out, err := req.Storage.Get(ctx, caPath)
-			if err != nil && out != nil && newCA == false {
-				// CA exists and does not need to be updated
-				goto setConfig
-			}
-			// set new CA-Cert
-			// 1、Update root certificate chain
-			s := new(SerialNumber)
-			s.readStorage(ctx, req)
-			// rootCA
-			rootCA := new(CA)
-			rootCA.SetCACert("root", "root", "1000h", ns, s)
-			err = rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil)
-			if err != nil {
-				return nil, err
-			}
-			err = rootCA.writeStorage(ctx, req, caPath)
-			if err != nil {
-				return nil, err
-			}
-			// childCA
-			s.readStorage(ctx, req)
-			childCA := new(CA)
-			childCA.SetCACert("root", "root", "1000h", ns, s)
-			err = childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA)
-			if err != nil {
-				return nil, err
-			}
-			err = childCA.writeStorage(ctx, req, caPath)
-			if err != nil {
-				return nil, err
-			}
-
-			// 2、Update certificates for all roles in all spaces
-			//for scopeName, scopes := range b.scopes {
-			//	for roleName, roleConf := range scopes.Roles {
-			//		key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
-			//		// Generate Cert
-			//		CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
-			//		// PEM format
-			//		certificate, err := CertPEM(CertBytes)
-			//		if err != nil {
-			//			continue
-			//		}
-			//		data := map[string]interface{}{
-			//			"ca_chain":      []string{b.rootCA[0].CertPEM, b.rootCA[1].CertPEM},
-			//			"certificate":   certificate,
-			//			"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
-			//			"serial_number": roleConf.SerialNumber,
-			//		}
-			//		// write credential information
-			//		if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
-			//			return nil, fmt.Errorf("failed to write: %w", err)
-			//		}
-			//
-			//	}
-			//}
+		// 1、Update root certificate chain
+		// rootCA
+		if err := rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil); err != nil {
+			return nil, err
 		}
-
-	setConfig:
+		if err := rootCA.writeStorage(ctx, req, caPath); err != nil {
+			return nil, err
+		}
+		// childCA
+		if err := childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA); err != nil {
+			return nil, err
+		}
+		if err := childCA.writeStorage(ctx, req, caPath); err != nil {
+			return nil, err
+		}
 		if err := config.writeStorage(ctx, req); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
@@ -218,10 +172,6 @@ func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
 
 func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		ns, err := namespace.FromContext(ctx)
-		if err != nil {
-			return nil, err
-		}
 		// Check that some fields are given
 		if len(req.Data) == 0 {
 			return logical.ErrorResponse("missing data fields"), nil
@@ -254,67 +204,80 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		}
 
 		// update caCert
-		{
-			out, err := req.Storage.Get(ctx, caPath)
-			if err != nil && out != nil && newCA == false {
-				// CA exists and does not need to be updated
-				goto setConfig
+		if newCA {
+			out, err := listStorage(ctx, req, caPath)
+			if err != nil {
+				return nil, err
 			}
-			// set new CA-Cert
-			// 1、Update root certificate chain
-			s := new(SerialNumber)
-			s.readStorage(ctx, req)
-			// rootCA
 			rootCA := new(CA)
-			rootCA.SetCACert("root", "root", "1000h", ns, s)
-			err = rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil)
-			if err != nil {
+			if err := rootCA.readStorage(ctx, req, caPath, out[0]); err != nil {
 				return nil, err
 			}
-			err = rootCA.writeStorage(ctx, req, caPath)
-			if err != nil {
+			if err := rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil); err != nil {
 				return nil, err
 			}
-			// childCA
-			s.readStorage(ctx, req)
+			if err := rootCA.writeStorage(ctx, req, caPath); err != nil {
+				return nil, err
+			}
 			childCA := new(CA)
-			childCA.SetCACert("root", "root", "1000h", ns, s)
-			err = childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA)
-			if err != nil {
-				return nil, err
-			}
-			err = childCA.writeStorage(ctx, req, caPath)
-			if err != nil {
-				return nil, err
+			// If there are more than two CA certificates in the CA chain
+			for _, sn := range out[1:] {
+				childCA.readStorage(ctx, req, caPath, sn)
+				if err := childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA); err != nil {
+					return nil, err
+				}
+				if err := childCA.writeStorage(ctx, req, caPath); err != nil {
+					return nil, err
+				}
+				*rootCA = *childCA
 			}
 
 			// 2、Update certificates for all roles in all spaces
-			//for scopeName, scopes := range b.scopes {
-			//	for roleName, roleConf := range scopes.Roles {
-			//		key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
-			//		// Generate Cert
-			//		CertBytes, PrivateKey, err := ChildCaGenerate(roleConf.TlsClientKeyType, roleConf.TlsClientKeyBits, b.rootCA[1].Cert, roleConf.Cert, childPrivateKey)
-			//		// PEM format
-			//		certificate, err := CertPEM(CertBytes)
-			//		if err != nil {
-			//			continue
-			//		}
-			//		data := map[string]interface{}{
-			//			"ca_chain":      []string{b.rootCA[0].CertPEM, b.rootCA[1].CertPEM},
-			//			"certificate":   certificate,
-			//			"private_key":   PrivateKeyPEM(PrivateKey, roleConf),
-			//			"serial_number": roleConf.SerialNumber,
-			//		}
-			//		// write credential information
-			//		if err := writeStorage(ctx, req, key+roleConf.SerialNumber, data); err != nil {
-			//			return nil, fmt.Errorf("failed to write: %w", err)
-			//		}
-			//
-			//	}
-			//}
+			scopes, err := listStorage(ctx, req, "scope")
+			if err != nil {
+				return nil, err
+			}
+			ca := new(CA)
+			role := new(Role)
+			for _, scopeName := range scopes {
+				roles, err := listStorage(ctx, req, "scope/"+scopeName)
+				if err != nil {
+					return nil, err
+				}
+				for _, roleName := range roles {
+					role.readStorage(ctx, req, scopeName, roleName)
+					key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
+					sn, err := listStorage(ctx, req, key)
+					if err != nil {
+						return nil, err
+					}
+					for _, s := range sn {
+						// read ca information
+						if err := ca.readStorage(ctx, req, key, s); err != nil {
+							return nil, err
+						}
+						// Regenerate certificate
+						if err := ca.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, childCA); err != nil {
+							return nil, err
+						}
+						// storage ca
+						if err := ca.writeStorage(ctx, req, key); err != nil {
+							return nil, err
+						}
+						data := map[string]interface{}{
+							"ca_chain":      []string{rootCA.CertPEM, childCA.CertPEM},
+							"certificate":   ca.CertPEM,
+							"private_key":   ca.PrivateKeyPEM(),
+							"serial_number": s,
+						}
+						// write credential information
+						if err := writeStorage(ctx, req, key+s+"_resData", data); err != nil {
+							return nil, fmt.Errorf("failed to write: %w", err)
+						}
+					}
+				}
+			}
 		}
-
-	setConfig:
 		if err := config.writeStorage(ctx, req); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
@@ -364,28 +327,3 @@ func DefaultConfigMap() map[string]interface{} {
 		"tls_min_version":             "tls12",
 	}
 }
-
-//func (b *KmipBackend) handleDelete() framework.OperationFunc {
-//	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-//		key := data.Get("path").(string)
-//
-//		// delete the role
-//		if strings.Contains(key, "role") {
-//			re := regexp.MustCompile(`scope/(?P<scope>.+)/role/(?P<role>.+)`)
-//			match := re.FindStringSubmatch(key)
-//			if len(match) != 3 {
-//				return nil, fmt.Errorf("must specify the deleted rolename")
-//			}
-//
-//		}
-//
-//		// Delete the key at the request path
-//		if err := req.Storage.Delete(ctx, key); err != nil {
-//			return nil, err
-//		}
-//
-//		//kvEvent(ctx, b.Backend, "delete", key, "", true, 1)
-//
-//		return nil, nil
-//	}
-//}
