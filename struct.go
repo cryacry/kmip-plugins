@@ -1,10 +1,5 @@
 package kmipengine
 
-import (
-	"math/big"
-	"sync"
-)
-
 type (
 	Tls_key_type string
 )
@@ -86,34 +81,6 @@ var Operations = map[operation]string{
 	OperationRngRetrieve:      "operation_rng_retrieve",
 	OperationAll:              "operation_all",
 }
-
-type RoleCAConfig struct {
-	TlsClientKeyBits int          `json:"tls_client_key_bits"`
-	TlsClientKeyTTL  string       `json:"tls_client_key_ttl"`
-	TlsClientKeyType Tls_key_type `json:"tls_client_key_type"`
-}
-
-type SerialNumber struct {
-	SN *big.Int
-	L  *sync.RWMutex
-}
-
-//type Config map[string]interface{}
-
-//func DefaultConfig() map[string]interface{} {
-//	// 创建一个TLSConfig结构体的实例
-//	return map[string]interface{}{
-//		"default_tls_client_key_bits": 2048,
-//		"default_tls_client_key_type": rsa_key_type,
-//		"default_tls_client_ttl":      (336 * time.Hour).String(),
-//		"listen_addrs":                []string{"0.0.0.0:5696"},
-//		"server_hostnames":            []string{"localhost"},
-//		"server_ips":                  []string{"127.0.0.1", "::1"}, // 将拆分后的IP列表赋值给server_ips
-//		"tls_ca_key_bits":             2048,
-//		"tls_ca_key_type":             rsa_key_type,
-//		"tls_min_version":             "tls12",
-//	}
-//}
 
 //func DefaultConfig() Config {
 //	return Config{

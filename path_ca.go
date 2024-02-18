@@ -298,6 +298,11 @@ func (c *CA) CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, parentCA *C
 	return fmt.Errorf("This type of certificate type is not supported")
 }
 
+type SerialNumber struct {
+	SN *big.Int
+	L  *sync.RWMutex
+}
+
 func (sn *SerialNumber) readStorage(ctx context.Context, req *logical.Request) error {
 	data, err := readStorage(ctx, req, serialNumberPath)
 	var snOld SerialNumber
