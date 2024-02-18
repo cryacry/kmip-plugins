@@ -319,22 +319,11 @@ func (sn *SerialNumber) readStorage(ctx context.Context, req *logical.Request) e
 	} else {
 		MapToStruct(data, &snOld)
 	}
-	// 将sn
+	// update SN, Write SN+1 back to Storage
 	snNew := snOld
 	snNew.SN.Add(snNew.SN, big.NewInt(1))
-	buf, err := json.Marshal(snNew)
-	if err != nil {
-		return fmt.Errorf("json encoding failed: %w", err)
-	}
-
-	// Write out a new key
-	entry := &logical.StorageEntry{
-		Key:   serialNumberPath,
-		Value: buf,
-	}
-	if err := req.Storage.Put(ctx, entry); err != nil {
-		return fmt.Errorf("failed to write: %w", err)
-	}
+	snNew.writeStorage(ctx, req)
+	// return sn
 	sn.SN = snOld.SN
 	return nil
 }
