@@ -1,7 +1,7 @@
 package kmipengine
 
 type (
-	Tls_key_type string
+	tlsKeyType = string
 )
 
 const (
@@ -13,8 +13,8 @@ const (
 )
 
 const (
-	ec_key_type  Tls_key_type = "ec"
-	rsa_key_type Tls_key_type = "rsa"
+	ecKeyType  tlsKeyType = "ec"
+	rsaKeyType tlsKeyType = "rsa"
 )
 
 type operation uint8

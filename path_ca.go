@@ -37,11 +37,11 @@ type ECDSAKey struct {
 
 // PrivateKeyType is an interface for private key types
 type PrivateKeyType interface {
-	isPrivateKeyType() Tls_key_type
+	isPrivateKeyType() tlsKeyType
 }
 
-func (r *RSAKey) isPrivateKeyType() Tls_key_type   { return rsa_key_type }
-func (e *ECDSAKey) isPrivateKeyType() Tls_key_type { return ec_key_type }
+func (r *RSAKey) isPrivateKeyType() tlsKeyType   { return rsaKeyType }
+func (e *ECDSAKey) isPrivateKeyType() tlsKeyType { return ecKeyType }
 
 // hashiCupsConfig includes the minimum configuration
 // required to instantiate a new HashiCups client.
@@ -216,11 +216,11 @@ func (c *CA) PrivateKeyPEM() []byte {
 	var keyBytes []byte
 	var _type string
 	switch c.PrivateKey.isPrivateKeyType() {
-	case rsa_key_type:
+	case rsaKeyType:
 		privateKey := c.PrivateKey.(*RSAKey)
 		keyBytes = x509.MarshalPKCS1PrivateKey(privateKey.PrivateKey)
 		_type = "RSA PRIVATE KEY"
-	case ec_key_type:
+	case ecKeyType:
 		privateKey := c.PrivateKey.(*ECDSAKey)
 		keyBytes, _ = x509.MarshalECPrivateKey(privateKey.PrivateKey)
 		_type = "EC PRIVATE KEY"
@@ -234,13 +234,13 @@ func (c *CA) PrivateKeyPEM() []byte {
 	return privateKeyPEM
 }
 
-func (c *CA) CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, parentCA *CA) error {
+func (c *CA) CaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, parentCA *CA) error {
 
 	// Set certificate information
 	var CertBytes []byte
 	// Generate random private key
 	switch tlsCAKeyType {
-	case rsa_key_type:
+	case rsaKeyType:
 		privateKey, err := rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
 		if err != nil {
 			fmt.Println("Failed to create certificate:", err)
@@ -268,7 +268,7 @@ func (c *CA) CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, parentCA *C
 		c.PrivateKey = &RSAKey{PrivateKey: privateKey}
 		return nil
 
-	case ec_key_type:
+	case ecKeyType:
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			fmt.Println("Failed to create certificate:", err)

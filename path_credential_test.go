@@ -27,7 +27,7 @@ func TestCredential(t *testing.T) {
 	d1 := map[string]interface{}{
 		"tls_client_key_ttl":      (336 * time.Hour).String(),
 		"tls_client_key_bits":     2048,
-		"tls_client_key_type":     rsa_key_type,
+		"tls_client_key_type":     rsaKeyType,
 		"operation_add_attribute": true,
 		"operation_create":        true,
 	}
@@ -53,7 +53,7 @@ func TestCredential(t *testing.T) {
 
 		assert.NoError(t, err)
 
-		err = testCredentialGenerate(t, b, reqStorage, scopes[0], roles[0])
+		err = testCredentialGenerate(t, b, reqStorage, scopes[0:1], roles[0:1])
 
 		assert.NoError(t, err)
 
@@ -105,18 +105,22 @@ func testCredentialCreate(t *testing.T, b logical.Backend, s logical.Storage, sc
 	return nil
 }
 
-func testCredentialGenerate(t *testing.T, b logical.Backend, s logical.Storage, scope, role string) error {
+func testCredentialGenerate(t *testing.T, b logical.Backend, s logical.Storage, scopes, roles []string) error {
 	ctx := namespace.RootContext(nil)
-	resp, err := b.HandleRequest(ctx, &logical.Request{
-		Operation: logical.UpdateOperation,
-		Path:      "scope/" + scope + "/role/" + role + "/credential/generate",
-		Storage:   s,
-	})
-	if err != nil {
-		return err
-	}
-	if resp != nil && resp.IsError() {
-		return resp.Error()
+	for _, scope := range scopes {
+		for _, role := range roles {
+			resp, err := b.HandleRequest(ctx, &logical.Request{
+				Operation: logical.UpdateOperation,
+				Path:      "scope/" + scope + "/role/" + role + "/credential/generate",
+				Storage:   s,
+			})
+			if err != nil {
+				return err
+			}
+			if resp != nil && resp.IsError() {
+				return resp.Error()
+			}
+		}
 	}
 	return nil
 }

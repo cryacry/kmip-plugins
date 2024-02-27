@@ -15,7 +15,7 @@ type Role struct {
 	Operations       []operation       `json:"operations"`
 	TlsClientKeyBits int               `json:"tls_client_key_bits"`
 	TlsClientKeyTTL  string            `json:"tls_client_key_ttl"`
-	TlsClientKeyType Tls_key_type      `json:"tls_client_key_type"`
+	TlsClientKeyType tlsKeyType        `json:"tls_client_key_type"`
 	Cert             *x509.Certificate `json:"cert"`
 }
 
@@ -153,7 +153,7 @@ func (b *KmipBackend) handleRoleCreate() framework.OperationFunc {
 			role.TlsClientKeyBits = req.Data["tls_client_key_bits"].(int)
 		}
 		if _, ok := req.Data["tls_client_key_type"]; ok {
-			role.TlsClientKeyType = req.Data["tls_client_key_type"].(Tls_key_type)
+			role.TlsClientKeyType = req.Data["tls_client_key_type"].(tlsKeyType)
 		}
 		if _, ok := req.Data["tls_client_key_ttl"]; ok {
 			role.TlsClientKeyTTL = req.Data["tls_client_key_ttl"].(string)
@@ -189,7 +189,7 @@ func (b *KmipBackend) handleRoleWrite() framework.OperationFunc {
 			role.TlsClientKeyBits = req.Data["tls_client_key_bits"].(int)
 		}
 		if _, ok := req.Data["tls_client_key_type"]; ok {
-			role.TlsClientKeyType = req.Data["tls_client_key_type"].(Tls_key_type)
+			role.TlsClientKeyType = req.Data["tls_client_key_type"].(tlsKeyType)
 		}
 		if _, ok := req.Data["tls_client_key_ttl"]; ok {
 			role.TlsClientKeyTTL = req.Data["tls_client_key_ttl"].(string)

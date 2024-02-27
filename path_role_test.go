@@ -29,7 +29,7 @@ func TestRole(t *testing.T) {
 	d1 := map[string]interface{}{
 		"tls_client_key_ttl":      (336 * time.Hour).String(),
 		"tls_client_key_bits":     2048,
-		"tls_client_key_type":     rsa_key_type,
+		"tls_client_key_type":     rsaKeyType,
 		"operation_add_attribute": true,
 		"operation_create":        true,
 	}
@@ -37,7 +37,7 @@ func TestRole(t *testing.T) {
 	d2 := map[string]interface{}{
 		"tls_client_key_ttl":      (112 * time.Hour).String(),
 		"tls_client_key_bits":     1024,
-		"tls_client_key_type":     rsa_key_type,
+		"tls_client_key_type":     rsaKeyType,
 		"operation_add_attribute": true,
 		"operation_create":        true,
 	}

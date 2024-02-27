@@ -13,13 +13,13 @@ import (
 	"reflect"
 )
 
-func CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, ca *x509.Certificate) ([]byte, interface{}, error) {
+func CaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, ca *x509.Certificate) ([]byte, interface{}, error) {
 
 	// Set certificate information
 	var caBytes []byte
 	// Generate random private key
 	switch tlsCAKeyType {
-	case rsa_key_type:
+	case rsaKeyType:
 		priv, err := rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
 		// Generate certificate
 		caBytes, err = x509.CreateCertificate(rand.Reader, ca, ca, &priv.PublicKey, priv)
@@ -29,7 +29,7 @@ func CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, ca *x509.Certificat
 		}
 		return caBytes, priv, nil
 
-	case ec_key_type:
+	case ecKeyType:
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		caBytes, err = x509.CreateCertificate(rand.Reader, ca, ca, &priv.PublicKey, priv)
 		if err != nil {
@@ -44,13 +44,13 @@ func CaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, ca *x509.Certificat
 	//fmt.Println("CA certificate and private key generated successfully.")
 }
 
-func ChildCaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, rootCert *x509.Certificate, ca *x509.Certificate, rootPri interface{}) ([]byte, interface{}, error) {
+func ChildCaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, rootCert *x509.Certificate, ca *x509.Certificate, rootPri interface{}) ([]byte, interface{}, error) {
 	// Set certificate information
 
 	var caBytes []byte
 	// Generate random private key
 	switch tlsCAKeyType {
-	case rsa_key_type:
+	case rsaKeyType:
 		priv, err := rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
 		// Generate certificate
 		caBytes, err = x509.CreateCertificate(rand.Reader, ca, rootCert, &priv.PublicKey, rootPri)
@@ -60,7 +60,7 @@ func ChildCaGenerate(tlsCAKeyType Tls_key_type, tlsCAKeyBits int, rootCert *x509
 		}
 		return caBytes, priv, nil
 
-	case ec_key_type:
+	case ecKeyType:
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		caBytes, err = x509.CreateCertificate(rand.Reader, ca, rootCert, &priv.PublicKey, rootPri)
 		if err != nil {
@@ -132,10 +132,10 @@ func PrivateKeyPEM(privateKey interface{}, roleConf *Role) []byte {
 	var keyBytes []byte
 	var _type string
 	switch roleConf.TlsClientKeyType {
-	case rsa_key_type:
+	case rsaKeyType:
 		keyBytes = x509.MarshalPKCS1PrivateKey(privateKey.(*rsa.PrivateKey))
 		_type = "RSA PRIVATE KEY"
-	case ec_key_type:
+	case ecKeyType:
 		keyBytes, _ = x509.MarshalECPrivateKey(privateKey.(*ecdsa.PrivateKey))
 		_type = "EC PRIVATE KEY"
 	}

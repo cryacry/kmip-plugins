@@ -24,14 +24,23 @@ func TestConfig(t *testing.T) {
 
 	d1 := map[string]interface{}{
 		"default_tls_client_key_bits": 2048,
-		"default_tls_client_key_type": rsa_key_type,
+		"default_tls_client_key_type": rsaKeyType,
 		"default_tls_client_ttl":      (112 * time.Hour).String(),
 		"listen_addrs":                []string{"0.0.0.0:5696"},
 		"server_hostnames":            []string{"localhost", "kmipserver"},
 		"server_ips":                  []string{"127.0.0.1", "::1"}, // 将拆分后的IP列表赋值给server_ips
 		"tls_ca_key_bits":             1024,
-		"tls_ca_key_type":             rsa_key_type,
+		"tls_ca_key_type":             rsaKeyType,
 		"tls_min_version":             "tls12",
+	}
+
+	scopes := []string{"aaa", "bbb", "ccc"}
+
+	roles := []string{"qq", "ww", "ee"}
+
+	roleConf := map[string]interface{}{
+		"operation_add_attribute": true,
+		"operation_create":        true,
 	}
 
 	t.Run("Test Configuration", func(t *testing.T) {
@@ -49,6 +58,20 @@ func TestConfig(t *testing.T) {
 
 		assert.NoError(t, err)
 
+		// create scope role credential
+		err = testScopeCreate(t, b, reqStorage, scopes)
+
+		assert.NoError(t, err)
+
+		err = testRoleCreate(t, b, reqStorage, scopes, roles, roleConf)
+
+		assert.NoError(t, err)
+
+		err = testCredentialGenerate(t, b, reqStorage, scopes, roles)
+
+		assert.NoError(t, err)
+
+		// update config
 		err = testConfigUpdate(t, b, reqStorage, d)
 
 		assert.NoError(t, err)
@@ -56,29 +79,8 @@ func TestConfig(t *testing.T) {
 		err = testConfigRead(t, b, reqStorage, d1)
 
 		assert.NoError(t, err)
-
-		//err = testConfigDelete(t, b, reqStorage)
-		//
-		//assert.NoError(t, err)
 	})
 }
-
-//func testConfigDelete(t *testing.T, b logical.Backend, s logical.Storage) error {
-//	resp, err := b.HandleRequest(context.Background(), &logical.Request{
-//		Operation: logical.DeleteOperation,
-//		Path:      configStoragePath,
-//		Storage:   s,
-//	})
-//
-//	if err != nil {
-//		return err
-//	}
-//
-//	if resp != nil && resp.IsError() {
-//		return resp.Error()
-//	}
-//	return nil
-//}
 
 func testConfigCreate(t *testing.T, b logical.Backend, s logical.Storage, d map[string]interface{}) error {
 	ctx := namespace.RootContext(nil)
