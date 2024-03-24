@@ -2,12 +2,12 @@ package kmipengine
 
 import (
 	"fmt"
-	"github.com/hashicorp/vault/helper/namespace"
 	"reflect"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/cryacry/kmip-plugins/helper/namespace"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/assert"
 )

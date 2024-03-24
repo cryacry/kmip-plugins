@@ -3,10 +3,11 @@ package kmipengine
 import (
 	"context"
 	"fmt"
-	"github.com/hashicorp/vault/helper/namespace"
+	"strings"
+
+	"github.com/cryacry/kmip-plugins/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"strings"
 )
 
 func pathCredentials(b *KmipBackend) []*framework.Path {

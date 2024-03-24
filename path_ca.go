@@ -11,12 +11,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/hashicorp/vault/helper/namespace"
+
 	"math/big"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cryacry/kmip-plugins/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )

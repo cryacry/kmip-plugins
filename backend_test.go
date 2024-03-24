@@ -3,8 +3,8 @@ package kmipengine
 import (
 	"testing"
 
+	"github.com/cryacry/kmip-plugins/helper/namespace"
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
