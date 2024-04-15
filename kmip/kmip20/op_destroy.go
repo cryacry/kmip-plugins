@@ -4,7 +4,7 @@ package kmip20
 import (
 	"context"
 
-	"github.com/hashicorp/vault/vault/kmip"
+	"github.com/cryacry/kmip-plugins/kmip"
 )
 
 // 6.1.15 Destroy

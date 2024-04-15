@@ -26,10 +26,10 @@ import (
 	"time"
 
 	"github.com/ansel1/merry"
+	"github.com/cryacry/kmip-plugins/kmip/kmip14"
+	"github.com/cryacry/kmip-plugins/kmip/ttlv"
 	"github.com/gemalto/flume"
 	"github.com/google/uuid"
-	"github.com/hashicorp/vault/vault/kmip/kmip14"
-	"github.com/hashicorp/vault/vault/kmip/ttlv"
 )
 
 var serverLog = flume.New("kmip_server")

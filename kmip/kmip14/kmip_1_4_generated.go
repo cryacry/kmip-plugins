@@ -2,7 +2,7 @@
 package kmip14
 
 import (
-	"github.com/hashicorp/vault/vault/kmip/ttlv"
+	"github.com/cryacry/kmip-plugins/kmip/ttlv"
 )
 
 const (

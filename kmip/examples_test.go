@@ -6,10 +6,10 @@ import (
 	"net"
 	"time"
 
+	"github.com/cryacry/kmip-plugins/kmip"
+	"github.com/cryacry/kmip-plugins/kmip/kmip14"
+	"github.com/cryacry/kmip-plugins/kmip/ttlv"
 	"github.com/google/uuid"
-	"github.com/hashicorp/vault/vault/kmip"
-	"github.com/hashicorp/vault/vault/kmip/kmip14"
-	"github.com/hashicorp/vault/vault/kmip/ttlv"
 )
 
 func Example_client() {

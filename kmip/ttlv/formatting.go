@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/ansel1/merry"
-	"github.com/hashicorp/vault/vault/kmip/internal/kmiputil"
+	"github.com/cryacry/kmip-plugins/kmip/internal/kmiputil"
 )
 
 // FormatType formats a byte as a KMIP Type string,

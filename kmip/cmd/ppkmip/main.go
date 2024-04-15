@@ -13,9 +13,9 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/hashicorp/vault/vault/kmip/kmip14"
-	_ "github.com/hashicorp/vault/vault/kmip/kmip20"
-	"github.com/hashicorp/vault/vault/kmip/ttlv"
+	_ "github.com/cryacry/kmip-plugins/kmip/kmip14"
+	_ "github.com/cryacry/kmip-plugins/kmip/kmip20"
+	"github.com/cryacry/kmip-plugins/kmip/ttlv"
 )
 
 const (

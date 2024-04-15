@@ -1,6 +1,6 @@
 package kmip20
 
-import "github.com/hashicorp/vault/vault/kmip/ttlv"
+import "github.com/cryacry/kmip-plugins/kmip/ttlv"
 
 type Attributes struct {
 	Values ttlv.Values

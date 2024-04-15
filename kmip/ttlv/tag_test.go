@@ -3,7 +3,7 @@ package ttlv_test
 import (
 	"testing"
 
-	"github.com/hashicorp/vault/vault/kmip/kmip14"
+	"github.com/cryacry/kmip-plugins/kmip/kmip14"
 	"github.com/stretchr/testify/assert"
 )
 

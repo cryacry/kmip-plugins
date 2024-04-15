@@ -2,7 +2,7 @@ package kmip20
 
 import (
 	"github.com/ansel1/merry"
-	"github.com/hashicorp/vault/vault/kmip/ttlv"
+	"github.com/cryacry/kmip-plugins/kmip/ttlv"
 )
 
 type UniqueIdentifierValue struct {

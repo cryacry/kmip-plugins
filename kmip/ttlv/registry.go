@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/ansel1/merry"
-	"github.com/hashicorp/vault/vault/kmip/internal/kmiputil"
+	"github.com/cryacry/kmip-plugins/kmip/internal/kmiputil"
 )
 
 // DefaultRegistry holds the default mappings of types, tags, enums, and bitmasks

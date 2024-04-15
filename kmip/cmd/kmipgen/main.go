@@ -16,7 +16,7 @@ import (
 	"text/template"
 
 	"github.com/ansel1/merry"
-	"github.com/hashicorp/vault/vault/kmip/internal/kmiputil"
+	"github.com/cryacry/kmip-plugins/kmip/internal/kmiputil"
 )
 
 // Specifications is the struct which the specifications JSON is unmarshaled into.

@@ -1,7 +1,7 @@
 package kmip
 
 import (
-	"github.com/hashicorp/vault/vault/kmip/kmip14"
+	"github.com/cryacry/kmip-plugins/kmip/kmip14"
 )
 
 // 3

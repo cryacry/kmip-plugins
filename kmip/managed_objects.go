@@ -3,7 +3,7 @@ package kmip
 import (
 	"math/big"
 
-	"github.com/hashicorp/vault/vault/kmip/kmip14"
+	"github.com/cryacry/kmip-plugins/kmip/kmip14"
 )
 
 // 2.2
