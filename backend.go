@@ -40,7 +40,7 @@ type KmipBackend struct {
 	logger          log.Logger
 	storage         logical.Storage
 	lock            *sync.Mutex
-	TokenCreate     func(ctx context.Context, scopeName, roleName string) (*logical.Auth, error)
+	TokenCreate     func(ctx context.Context, scopeName, roleName, tokenAccessor string, role Role) (*logical.Auth, error)
 	TokenRevoke     func(ctx context.Context, accessor string) error
 	PolicyCreate    func(ctx context.Context, scopeName, roleName string) error
 	PolicyDelete    func(ctx context.Context, scope, role string) error
@@ -242,6 +242,19 @@ func deleteStorage(ctx context.Context, req *logical.Request, key string) error 
 		return err
 	}
 	return nil
+}
+
+func (kb *KmipBackend) tokenCreate(ctx context.Context, scopeName, roleName string) (*logical.Auth, error) {
+	role, err := kb.newRole(scopeName, roleName)
+	if err != nil {
+		return nil, err
+	}
+	role.readStorage(ctx, kb.storage, scopeName, roleName)
+	auth, err := kb.TokenCreate(ctx, scopeName, roleName, kb.tokenAccessor, *role)
+	if err != nil {
+		return nil, err
+	}
+	return auth, err
 }
 
 const KmipHelp = `

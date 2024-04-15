@@ -180,7 +180,7 @@ func (kb *KmipBackend) sessionAuthHandler(state tls.ConnectionState, op operatio
 		}
 	}
 
-	auth, err := kb.TokenCreate(ctx, scopeName, roleName)
+	auth, err := kb.tokenCreate(ctx, scopeName, roleName)
 	if err != nil {
 		return nil, kmip.WithResultReason(err, kmip14.ResultReasonPermissionDenied)
 	}
