@@ -180,7 +180,7 @@ func (kb *KmipBackend) sessionAuthHandler(state tls.ConnectionState, op operatio
 		}
 	}
 
-	auth, err := kb.tokenCreate(ctx, scopeName, roleName)
+	auth, err := kb.TokenCreate(ctx, scopeName, roleName)
 	if err != nil {
 		return nil, kmip.WithResultReason(err, kmip14.ResultReasonPermissionDenied)
 	}
@@ -274,7 +274,7 @@ func (kb *KmipBackend) createFunc() func(ctx context.Context, payload *kmip.Crea
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.setAttribute(payload.TemplateAttribute.Attribute)
 		res, err := externalProc(externalProcAddr, info)
 		if err != nil {
@@ -307,7 +307,7 @@ func (kb *KmipBackend) destroyFunc() func(ctx context.Context, payload *kmip.Des
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		_, err = externalProc(externalProcAddr, info)
 		if err != nil {
@@ -325,7 +325,7 @@ func (kb *KmipBackend) getFunc() func(ctx context.Context, payload *kmip.GetRequ
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		resp := &kmip.GetResponsePayload{
 			UniqueIdentifier: payload.UniqueIdentifier,
 		}
@@ -422,7 +422,7 @@ func (kb *KmipBackend) creatKeyPair() func(ctx context.Context, payload *kmip.Cr
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.setAttribute(payload.CommonTemplateAttribute.Attribute)
 		//for _, k := range payload.PublicKeyTemplateAttribute.Attribute {
 		//	info[publicKeyAddSuffix(k.AttributeName)] = k.AttributeValue.(string)
@@ -570,7 +570,7 @@ func (kb *KmipBackend) encryptFunc() func(ctx context.Context, payload *kmip.Enc
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		info.Content = payload.Data
 		//info["cryptographic_parameters"], err = json.Marshal(payload.CryptographicParameters)
@@ -598,7 +598,7 @@ func (kb *KmipBackend) decryptFunc() func(ctx context.Context, payload *kmip.Dec
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		info.Content = payload.Data
 		//info["cryptographic_parameters"], err = json.Marshal(payload.CryptographicParameters)
@@ -626,7 +626,7 @@ func (kb *KmipBackend) signFunc() func(ctx context.Context, payload *kmip.SignRe
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		info.Content = payload.Data
 		info.HashingAlgorithm = payload.CryptographicParameters.HashingAlgorithm.String()
@@ -655,7 +655,7 @@ func (kb *KmipBackend) signatureVerifyFunc() func(ctx context.Context, payload *
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		info.Signature = payload.SignatureData
 		info.Content = payload.Data
@@ -689,7 +689,7 @@ func (kb *KmipBackend) rekeyFunc() func(ctx context.Context, payload *kmip.Rekey
 		if err != nil {
 			return nil, err
 		}
-		defer kb.tokenRevoke(ctx, info.accessor)
+		defer kb.TokenRevoke(ctx, info.accessor)
 		info.KeyID = keyIDRemoveSuffix(payload.UniqueIdentifier)
 		if err != nil {
 			return nil, kmip.WithResultReason(err, kmip14.ResultReasonGeneralFailure)

@@ -40,12 +40,12 @@ type KmipBackend struct {
 	logger          log.Logger
 	storage         logical.Storage
 	lock            *sync.Mutex
-	tokenCreate     func(ctx context.Context, scopeName, roleName string) (*logical.Auth, error)
-	tokenRevoke     func(ctx context.Context, accessor string) error
-	policyCreate    func(ctx context.Context, scopeName, roleName string) error
-	policyDelete    func(ctx context.Context, scope, role string) error
-	mountTransit    func(ctx context.Context, scope, role string) error
-	unmountTransit  func(ctx context.Context, scope, role string) error
+	TokenCreate     func(ctx context.Context, scopeName, roleName string) (*logical.Auth, error)
+	TokenRevoke     func(ctx context.Context, accessor string) error
+	PolicyCreate    func(ctx context.Context, scopeName, roleName string) error
+	PolicyDelete    func(ctx context.Context, scope, role string) error
+	MountTransit    func(ctx context.Context, scope, role string) error
+	UnmountTransit  func(ctx context.Context, scope, role string) error
 	NamespaceByPath func(nsPath string) (*namespace.Namespace, error)
 }
 
