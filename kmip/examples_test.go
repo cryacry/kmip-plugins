@@ -1,0 +1,92 @@
+package kmip_test
+
+import (
+	"bufio"
+	"fmt"
+	"net"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/hashicorp/vault/vault/kmip"
+	"github.com/hashicorp/vault/vault/kmip/kmip14"
+	"github.com/hashicorp/vault/vault/kmip/ttlv"
+)
+
+func Example_client() {
+	conn, err := net.DialTimeout("tcp", "localhost:5696", 3*time.Second)
+	if err != nil {
+		panic(err)
+	}
+
+	biID := uuid.New()
+
+	msg := kmip.RequestMessage{
+		RequestHeader: kmip.RequestHeader{
+			ProtocolVersion: kmip.ProtocolVersion{
+				ProtocolVersionMajor: 1,
+				ProtocolVersionMinor: 2,
+			},
+			BatchCount: 1,
+		},
+		BatchItem: []kmip.RequestBatchItem{
+			{
+				UniqueBatchItemID: biID[:],
+				Operation:         kmip14.OperationDiscoverVersions,
+				RequestPayload: kmip.DiscoverVersionsRequestPayload{
+					ProtocolVersion: []kmip.ProtocolVersion{
+						{ProtocolVersionMajor: 1, ProtocolVersionMinor: 2},
+					},
+				},
+			},
+		},
+	}
+
+	req, err := ttlv.Marshal(msg)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(req)
+
+	_, err = conn.Write(req)
+	if err != nil {
+		panic(err)
+	}
+
+	buf := make([]byte, 5000)
+	_, err = bufio.NewReader(conn).Read(buf)
+	if err != nil {
+		panic(err)
+	}
+
+	resp := ttlv.TTLV(buf)
+	fmt.Println(resp)
+}
+
+func ExampleServer() {
+	listener, err := net.Listen("tcp", "0.0.0.0:5696")
+	if err != nil {
+		panic(err)
+	}
+
+	kmip.DefaultProtocolHandler.LogTraffic = true
+
+	kmip.DefaultOperationMux.Handle(kmip14.OperationDiscoverVersions, &kmip.DiscoverVersionsHandler{
+		SupportedVersions: []kmip.ProtocolVersion{
+			{
+				ProtocolVersionMajor: 1,
+				ProtocolVersionMinor: 4,
+			},
+			{
+				ProtocolVersionMajor: 1,
+				ProtocolVersionMinor: 3,
+			},
+			{
+				ProtocolVersionMajor: 1,
+				ProtocolVersionMinor: 2,
+			},
+		},
+	})
+	srv := kmip.Server{}
+	panic(srv.Serve(listener))
+}

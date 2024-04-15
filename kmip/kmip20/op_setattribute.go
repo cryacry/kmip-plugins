@@ -1,0 +1,44 @@
+package kmip20
+
+import (
+	"context"
+
+	"github.com/hashicorp/vault/vault/kmip"
+)
+
+// 6.1.47 Set Attribute
+
+// Table 296
+
+type SetAttributeRequestPayload struct {
+	UniqueIdentifier *UniqueIdentifierValue
+	NewAttribute     Attributes `ttlv:"DerivationData"`
+}
+
+// Table 297
+
+type SetAttributeResponsePayload struct {
+	UniqueIdentifier string
+}
+
+type SetAttributeHandler struct {
+	SetAttribute func(ctx context.Context, payload *SetAttributeRequestPayload) (*SetAttributeResponsePayload, error)
+}
+
+func (h *SetAttributeHandler) HandleItem(ctx context.Context, req *kmip.Request) (*kmip.ResponseBatchItem, error) {
+	var payload SetAttributeRequestPayload
+
+	err := req.DecodePayload(&payload)
+	if err != nil {
+		return nil, err
+	}
+
+	respPayload, err := h.SetAttribute(ctx, &payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return &kmip.ResponseBatchItem{
+		ResponsePayload: respPayload,
+	}, nil
+}

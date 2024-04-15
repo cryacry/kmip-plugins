@@ -119,10 +119,11 @@ func (b *KmipBackend) handleConfigRead() framework.OperationFunc {
 
 func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		ns, err := namespace.FromContext(ctx)
-		if err != nil {
-			return nil, err
-		}
+		//ns, err := namespace.FromContext(ctx)
+		ns := namespace.RootNamespace
+		//if err != nil {
+		//	return nil, err
+		//}
 		// Check that some fields are given
 		if len(req.Data) == 0 {
 			return logical.ErrorResponse("missing data fields"), nil

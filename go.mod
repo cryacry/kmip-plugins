@@ -4,7 +4,11 @@ go 1.21
 
 toolchain go1.21.3
 
-replace github.com/hashicorp/go-secure-stdlib/plugincontainer => ./helper/plugincontainer
+replace (
+	github.com/hashicorp/vault/vault/kmip => ./kmip
+	github.com/hashicorp/go-secure-stdlib/plugincontainer => ./helper/plugincontainer
+)
+
 require (
 	github.com/hashicorp/go-hclog v1.6.2
 	github.com/hashicorp/go-secure-stdlib/parseutil v0.1.8 // indirect

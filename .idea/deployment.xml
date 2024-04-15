@@ -5,7 +5,7 @@
       <paths name="2080ti">
         <serverdata>
           <mappings>
-            <mapping deploy="/home/go_file/vault-plugin/kmip-plugin" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/go_file/vault-1.15.4/vault/kmip" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
