@@ -11,15 +11,14 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"github.com/hashicorp/vault/helper/namespace"
+	"time"
 
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 	"math/big"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/cryacry/kmip-plugins/helper/namespace"
-	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/logical"
 )
 
 const (
@@ -47,21 +46,92 @@ func (e *ECDSAKey) isPrivateKeyType() tlsKeyType { return ecKeyType }
 // hashiCupsConfig includes the minimum configuration
 // required to instantiate a new HashiCups client.
 type CA struct {
-	L          *sync.RWMutex
+	lock       *sync.RWMutex     `json:"-"`
 	ParentCaSn string            `json:"parent_ca_sn"`
 	CertPEM    string            `json:"cert_pem"`
 	CertBytes  []byte            `json:"cert_bytes"`
 	Cert       *x509.Certificate `json:"cert"`
 	//PrivateKey interface{}       `json:"private_key"`
 	PrivateKey PrivateKeyType `json:"private_key"`
+	sn         string
 }
 
-// pathConfig extends the Vault API with a `/config`
-// endpoint for the backend. You can choose whether
-// or not certain attributes should be displayed,
-// required, and named. For example, password
-// is marked as sensitive and will not be output
-// when you read the configuration.
+func (kb *KmipBackend) newCA(sn string) *CA {
+	kb.lock.Lock()
+	defer kb.lock.Unlock()
+	if lock, ok := kb.certLock[sn]; ok {
+		return &CA{
+			lock: lock,
+			sn:   sn,
+		}
+	} else {
+		kb.certLock[sn] = new(sync.RWMutex)
+		return &CA{
+			lock: kb.certLock[sn],
+			sn:   sn,
+		}
+	}
+}
+
+func (c *CA) readStorage(ctx context.Context, storage logical.Storage, key string) error {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	path := key
+	if !strings.HasSuffix(key, "/") {
+		path = path + "/"
+	}
+	path = path + c.sn
+
+	data, err := readStorage(ctx, storage, path)
+	if err != nil {
+		return err
+	}
+
+	privateKeyData := data["private_key"].(map[string]interface{})
+	delete(data, "private_key")
+	if _, ok := privateKeyData["private_key_rsa"]; ok {
+		key := new(RSAKey)
+		if err := MapToStruct(privateKeyData, key); err != nil {
+			return err
+		}
+		c.PrivateKey = key
+	} else if _, ok := privateKeyData["private_key_ecdsa"]; ok {
+		key := new(ECDSAKey)
+		if err := MapToStruct(privateKeyData, key); err != nil {
+			return err
+		}
+		c.PrivateKey = key
+	}
+
+	if err := MapToStruct(data, c); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *CA) writeStorage(ctx context.Context, storage logical.Storage, key string) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	buf, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("json encoding failed: %w", err)
+	}
+
+	if !strings.HasSuffix(key, "/") {
+		key = key + "/"
+	}
+	// Write out a new key
+	entry := &logical.StorageEntry{
+		Key:   key + c.Cert.SerialNumber.String(),
+		Value: buf,
+	}
+	if err := storage.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write: %w", err)
+	}
+	return nil
+}
+
 func pathCa(b *KmipBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: caPath,
@@ -88,10 +158,10 @@ func pathCa(b *KmipBackend) *framework.Path {
 	}
 }
 
-func (b *KmipBackend) handleCAExistenceCheck() framework.ExistenceFunc {
+func (kb *KmipBackend) handleCAExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		key := caPath
-
+		kb.tokenAccessor = req.ClientTokenAccessor
 		out, err := req.Storage.Get(ctx, key)
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
@@ -100,25 +170,30 @@ func (b *KmipBackend) handleCAExistenceCheck() framework.ExistenceFunc {
 	}
 }
 
-func (b *KmipBackend) handleCARead() framework.OperationFunc {
+func (kb *KmipBackend) handleCARead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		sn, err := listStorage(ctx, req, caPath)
+		sn, err := listStorage(ctx, req.Storage, caPath)
 		if err != nil {
 			return nil, err
 		}
 		// read cert pem
+		resData := map[string]interface{}{}
 		pem := ""
-		ca := new(CA)
+
 		for _, k := range sn {
-			ca.readStorage(ctx, req, caPath, k)
+			ca := kb.newCA(k)
+			ca.readStorage(ctx, req.Storage, caPath)
 			if err != nil {
 				return nil, err
 			}
+			Data := map[string]interface{}{
+				"ca_pem":     ca.CertPEM,
+				"privateKey": ca.PrivateKeyPEM(),
+			}
+			resData[k] = Data
 			pem = pem + ca.CertPEM
 		}
-		resData := map[string]interface{}{
-			"ca_pem": pem,
-		}
+		resData["pem"] = pem
 		resp := &logical.Response{
 			Secret: &logical.Secret{},
 			Data:   resData,
@@ -140,77 +215,31 @@ func (c *CA) setCA(certPEM string, certBytes []byte, cert *x509.Certificate, pri
 	}
 }
 
-func (c *CA) readStorage(ctx context.Context, req *logical.Request, key string, sn string) error {
-	path := key
-	if !strings.HasSuffix(key, "/") {
-		path = path + "/"
-	}
-	path = path + sn
-
-	data, err := readStorage(ctx, req, path)
-	if err != nil {
-		return err
-	}
-
-	privateKeyData := data["private_key"].(map[string]interface{})
-	delete(data, "private_key")
-	if _, ok := privateKeyData["private_key_rsa"]; ok {
-		key := new(RSAKey)
-		if err := MapToStruct(privateKeyData, key); err != nil {
-			return err
-		}
-		c.PrivateKey = key
-	} else if _, ok := privateKeyData["private_key_ecdsa"]; ok {
-		key := new(RSAKey)
-		if err := MapToStruct(privateKeyData, key); err != nil {
-			return err
-		}
-		c.PrivateKey = key
-	}
-
-	if err := MapToStruct(data, c); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *CA) writeStorage(ctx context.Context, req *logical.Request, key string) error {
-	buf, err := json.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("json encoding failed: %w", err)
-	}
-
-	if !strings.HasSuffix(key, "/") {
-		key = key + "/"
-	}
-	// Write out a new key
-	entry := &logical.StorageEntry{
-		Key:   key + c.Cert.SerialNumber.String(),
-		Value: buf,
-	}
-	if err := req.Storage.Put(ctx, entry); err != nil {
-		return fmt.Errorf("failed to write: %w", err)
-	}
-	return nil
-}
-
 func (c *CA) SetCACert(role, scope, ttl string, ns *namespace.Namespace, sn *SerialNumber) {
 	duration, _ := time.ParseDuration(ttl)
 	cert := &x509.Certificate{
 		SerialNumber: sn.SN,
 		Subject: pkix.Name{
-			CommonName:   role,                     // role
-			Organization: []string{scope, ns.Path}, // scope
-
+			Province:      []string{ns.Path}, // namespacePath
+			Locality:      []string{scope},   // scope
+			StreetAddress: []string{role},    // role
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(duration), // 有效期
+		NotAfter:              time.Now().Add(duration), // Validity period
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
 	c.Cert = cert
+}
+
+func (c *CA) setToken(auth *logical.Auth) {
+	c.Cert.Subject.PostalCode = []string{auth.ClientToken}
+	c.Cert.Subject.CommonName = auth.Accessor
+}
+
+func (c *CA) getTokenAccessor() string {
+	return c.Cert.Subject.CommonName
 }
 
 func (c *CA) PrivateKeyPEM() []byte {
@@ -227,10 +256,35 @@ func (c *CA) PrivateKeyPEM() []byte {
 		_type = "EC PRIVATE KEY"
 	}
 
-	// 将私钥转换为 PEM 格式
+	//Convert private key to PEM format
 	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  _type,
 		Bytes: keyBytes,
+	})
+	return privateKeyPEM
+}
+
+func (c *CA) PublicKeyPEM() []byte {
+	var publicKey any
+	keyType := ""
+	switch c.PrivateKey.isPrivateKeyType() {
+	case rsaKeyType:
+		privateKey := c.PrivateKey.(*RSAKey)
+		publicKey = privateKey.PrivateKey.PublicKey
+		keyType = "RSA PUBLIC KEY"
+	case ecKeyType:
+		privateKey := c.PrivateKey.(*ECDSAKey)
+		publicKey = privateKey.PrivateKey.PublicKey
+		keyType = "EC PUBLIC KEY"
+	}
+	derBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//Convert private key to PEM format
+	privateKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  keyType,
+		Bytes: derBytes,
 	})
 	return privateKeyPEM
 }
@@ -242,7 +296,20 @@ func (c *CA) CaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, parentCA *CA)
 	// Generate random private key
 	switch tlsCAKeyType {
 	case rsaKeyType:
-		privateKey, err := rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
+		var privateKey *rsa.PrivateKey
+		var err error
+
+		switch tlsCAKeyBits {
+		case 2048:
+			privateKey, err = rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
+		case 3072:
+			privateKey, err = rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
+		case 4096:
+			privateKey, err = rsa.GenerateKey(rand.Reader, tlsCAKeyBits)
+		default:
+			return fmt.Errorf("unsupport rsa key bits size")
+		}
+
 		if err != nil {
 			fmt.Println("Failed to create certificate:", err)
 			return err
@@ -270,7 +337,20 @@ func (c *CA) CaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, parentCA *CA)
 		return nil
 
 	case ecKeyType:
-		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		var privateKey *ecdsa.PrivateKey
+		var err error
+
+		switch tlsCAKeyBits {
+		case 256:
+			privateKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		case 384:
+			privateKey, err = ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+		case 521:
+			privateKey, err = ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+		default:
+			return fmt.Errorf("unsupport ec key bits size")
+		}
+
 		if err != nil {
 			fmt.Println("Failed to create certificate:", err)
 			return err
@@ -300,36 +380,47 @@ func (c *CA) CaGenerate(tlsCAKeyType tlsKeyType, tlsCAKeyBits int, parentCA *CA)
 }
 
 type SerialNumber struct {
-	SN *big.Int
-	L  *sync.RWMutex
+	SN   *big.Int
+	lock *sync.Mutex
 }
 
-func (sn *SerialNumber) readStorage(ctx context.Context, req *logical.Request) error {
-	data, err := readStorage(ctx, req, serialNumberPath)
+func (kb *KmipBackend) newSerialNumber() *SerialNumber {
+	kb.lock.Lock()
+	defer kb.lock.Unlock()
+	return &SerialNumber{lock: kb.snLock}
+}
+
+func (sn *SerialNumber) readStorage(ctx context.Context, storage logical.Storage) error {
+	sn.lock.Lock()
+	data, err := readStorage(ctx, storage, serialNumberPath)
+	sn.lock.Unlock()
 	var snOld SerialNumber
 	if err != nil {
 		// SerialNumber not initialized
 		if err.Error() == errPathDataIsEmpty {
 			snOld = SerialNumber{
-				L:  new(sync.RWMutex),
-				SN: big.NewInt(0),
+				lock: sn.lock,
+				SN:   big.NewInt(0),
 			}
 		} else {
 			return err
 		}
 	} else {
 		MapToStruct(data, &snOld)
+		snOld.lock = sn.lock
 	}
 	// update SN, Write SN+1 back to Storage
 	snNew := snOld
 	snNew.SN.Add(snNew.SN, big.NewInt(1))
-	snNew.writeStorage(ctx, req)
+	snNew.writeStorage(ctx, storage)
 	// return sn
 	sn.SN = snOld.SN
 	return nil
 }
 
-func (sn *SerialNumber) writeStorage(ctx context.Context, req *logical.Request) error {
+func (sn *SerialNumber) writeStorage(ctx context.Context, storage logical.Storage) error {
+	sn.lock.Lock()
+	defer sn.lock.Unlock()
 	buf, err := json.Marshal(sn)
 	if err != nil {
 		return fmt.Errorf("json encoding failed: %w", err)
@@ -340,7 +431,7 @@ func (sn *SerialNumber) writeStorage(ctx context.Context, req *logical.Request) 
 		Key:   serialNumberPath,
 		Value: buf,
 	}
-	if err := req.Storage.Put(ctx, entry); err != nil {
+	if err := storage.Put(ctx, entry); err != nil {
 		return fmt.Errorf("failed to write: %w", err)
 	}
 	return nil

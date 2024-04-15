@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/cryacry/kmip-plugins/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -21,15 +21,60 @@ const (
 // hashiCupsConfig includes the minimum configuration
 // required to instantiate a new HashiCups client.
 type Config struct {
-	DefaultTLSClientKeyBits int        `json:"default_tls_client_key_bits"`
-	DefaultTLSClientKeyType tlsKeyType `json:"default_tls_client_key_type"`
-	DefaultTLSClientTTL     string     `json:"default_tls_client_ttl"`
-	ListenAddrs             []string   `json:"listen_addrs"`
-	ServerHostnames         []string   `json:"server_hostnames"`
-	ServerIPs               []string   `json:"server_ips"`
-	TLSCAKeyBits            int        `json:"tls_ca_key_bits"`
-	TLSCAKeyType            tlsKeyType `json:"tls_ca_key_type"`
-	TLSMinVersion           string     `json:"tls_min_version"`
+	lock                    *sync.RWMutex `json:"-"`
+	DefaultTLSClientKeyBits int           `json:"default_tls_client_key_bits"`
+	DefaultTLSClientKeyType tlsKeyType    `json:"default_tls_client_key_type"`
+	DefaultTLSClientTTL     string        `json:"default_tls_client_ttl"`
+	ListenAddrs             []string      `json:"listen_addrs"`
+	ServerHostnames         []string      `json:"server_hostnames"`
+	ServerIPs               []string      `json:"server_ips"`
+	TLSCAKeyBits            int           `json:"tls_ca_key_bits"`
+	TLSCAKeyType            tlsKeyType    `json:"tls_ca_key_type"`
+	TLSMinVersion           string        `json:"tls_min_version"`
+}
+
+func (kb *KmipBackend) newConfig() Config {
+	kb.lock.Lock()
+	defer kb.lock.Unlock()
+	if kb.configLock == nil {
+
+		kb.configLock = new(sync.RWMutex)
+	}
+	return Config{
+		lock: kb.configLock,
+	}
+}
+
+func (c *Config) readStorage(ctx context.Context, storage logical.Storage) error {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	data, err := readStorage(ctx, storage, configPath)
+	if err != nil {
+		return err
+	}
+	if err := MapToStruct(data, c); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Config) writeStorage(ctx context.Context, storage logical.Storage) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	buf, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("json encoding failed: %w", err)
+	}
+
+	// Write out a new key
+	entry := &logical.StorageEntry{
+		Key:   configPath,
+		Value: buf,
+	}
+	if err := storage.Put(ctx, entry); err != nil {
+		return fmt.Errorf("failed to write: %w", err)
+	}
+	return nil
 }
 
 // pathConfig extends the Vault API with a `/config`
@@ -46,20 +91,27 @@ func pathConfig(b *KmipBackend) *framework.Path {
 			OperationPrefix: "kmip",
 		},
 
+		Fields: map[string]*framework.FieldSchema{
+			"listen_addrs": {
+				Type:        framework.TypeStringSlice,
+				Description: "The action of the api-lock\n\n",
+				Default:     nil,
+			},
+			"server_hostnames": {
+				Type:        framework.TypeStringSlice,
+				Description: "The namespace of the operation\n\n",
+				Default:     nil,
+			},
+			"server_ips": {
+				Type:        framework.TypeStringSlice,
+				Description: "The key of unlock\n\n",
+				Default:     nil,
+			},
+		},
+
 		TakesArbitraryInput: true,
 
 		Operations: map[logical.Operation]framework.OperationHandler{
-			logical.CreateOperation: &framework.PathOperation{
-				Callback: b.handleConfigCreate(),
-				DisplayAttrs: &framework.DisplayAttributes{
-					OperationVerb: "write",
-				},
-				Responses: map[int][]framework.Response{
-					http.StatusNoContent: {{
-						Description: http.StatusText(http.StatusNoContent),
-					}},
-				},
-			},
 			logical.UpdateOperation: &framework.PathOperation{
 				Callback: b.handleConfigWrite(),
 				DisplayAttrs: &framework.DisplayAttributes{
@@ -91,9 +143,10 @@ func pathConfig(b *KmipBackend) *framework.Path {
 	}
 }
 
-func (b *KmipBackend) handleConfigExistenceCheck() framework.ExistenceFunc {
+func (kb *KmipBackend) handleConfigExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		key := configPath
+		kb.tokenAccessor = req.ClientTokenAccessor
 		out, err := req.Storage.Get(ctx, key)
 		if err != nil {
 			return false, fmt.Errorf("existence check failed: %w", err)
@@ -102,9 +155,9 @@ func (b *KmipBackend) handleConfigExistenceCheck() framework.ExistenceFunc {
 	}
 }
 
-func (b *KmipBackend) handleConfigRead() framework.OperationFunc {
+func (kb *KmipBackend) handleConfigRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		rawData, err := readStorage(ctx, req, configPath)
+		rawData, err := readStorage(ctx, req.Storage, configPath)
 		if err != nil {
 			return nil, fmt.Errorf("json decoding failed: %w", err)
 		}
@@ -117,62 +170,7 @@ func (b *KmipBackend) handleConfigRead() framework.OperationFunc {
 
 }
 
-func (b *KmipBackend) handleConfigCreate() framework.OperationFunc {
-	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		//ns, err := namespace.FromContext(ctx)
-		ns := namespace.RootNamespace
-		//if err != nil {
-		//	return nil, err
-		//}
-		// Check that some fields are given
-		if len(req.Data) == 0 {
-			return logical.ErrorResponse("missing data fields"), nil
-		}
-
-		// load default config
-		conf := DefaultConfigMap()
-		// update config
-		for i := range conf {
-			if data, ok := req.Data[i]; ok {
-				conf[i] = data
-			}
-		}
-		var config Config
-		MapToStruct(conf, &config)
-
-		// create root ca chain
-		rootCA := new(CA)
-		childCA := new(CA)
-		// set new CA-Cert
-		s := new(SerialNumber)
-		s.readStorage(ctx, req)
-		rootCA.SetCACert("root", "root", "1000h", ns, s)
-		s.readStorage(ctx, req)
-		childCA.SetCACert("root", "root", "1000h", ns, s)
-
-		// 1、Update root certificate chain
-		// rootCA
-		if err := rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil); err != nil {
-			return nil, err
-		}
-		if err := rootCA.writeStorage(ctx, req, caPath); err != nil {
-			return nil, err
-		}
-		// childCA
-		if err := childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA); err != nil {
-			return nil, err
-		}
-		if err := childCA.writeStorage(ctx, req, caPath); err != nil {
-			return nil, err
-		}
-		if err := config.writeStorage(ctx, req); err != nil {
-			return nil, fmt.Errorf("failed to write: %w", err)
-		}
-		return nil, nil
-	}
-}
-
-func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
+func (kb *KmipBackend) handleConfigWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		// Check that some fields are given
 		if len(req.Data) == 0 {
@@ -180,8 +178,8 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		}
 
 		// load config
-		var config Config
-		if err := config.readStorage(ctx, req); err != nil {
+		config := kb.newConfig()
+		if err := config.readStorage(ctx, req.Storage); err != nil {
 			return nil, err
 		}
 		conf, err := structToMapWithJsonTags(config)
@@ -196,6 +194,17 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 		}
 		MapToStruct(conf, &config)
 
+		if raw := data.Get("listen_addrs").([]string); len(raw) > 0 {
+			// restart Listener
+			config.ListenAddrs = kb.setupListener(raw)
+		}
+		if raw := data.Get("server_hostnames").([]string); len(raw) > 0 {
+			config.ServerHostnames = raw
+		}
+		if raw := data.Get("server_ips").([]string); len(raw) > 0 {
+			config.ServerIPs = raw
+		}
+
 		// Determine if it is necessary to regenerate the CA certificate
 		newCA := false
 		if _, ok := req.Data[CAType]; ok {
@@ -207,112 +216,89 @@ func (b *KmipBackend) handleConfigWrite() framework.OperationFunc {
 
 		// update caCert
 		if newCA {
-			out, err := listStorage(ctx, req, caPath)
+			out, err := listStorage(ctx, req.Storage, caPath)
 			if err != nil {
 				return nil, err
 			}
-			rootCA := new(CA)
-			if err := rootCA.readStorage(ctx, req, caPath, out[0]); err != nil {
+			rootCA := kb.newCA(out[0])
+			if err := rootCA.readStorage(ctx, req.Storage, caPath); err != nil {
 				return nil, err
 			}
 			if err := rootCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, nil); err != nil {
 				return nil, err
 			}
-			if err := rootCA.writeStorage(ctx, req, caPath); err != nil {
+			if err := rootCA.writeStorage(ctx, req.Storage, caPath); err != nil {
 				return nil, err
 			}
-			childCA := new(CA)
 			// If there are more than two CA certificates in the CA chain
 			for _, sn := range out[1:] {
-				childCA.readStorage(ctx, req, caPath, sn)
+				childCA := kb.newCA(sn)
+				childCA.readStorage(ctx, req.Storage, caPath)
 				if err := childCA.CaGenerate(config.TLSCAKeyType, config.TLSCAKeyBits, rootCA); err != nil {
 					return nil, err
 				}
-				if err := childCA.writeStorage(ctx, req, caPath); err != nil {
+				if err := childCA.writeStorage(ctx, req.Storage, caPath); err != nil {
 					return nil, err
 				}
 				*rootCA = *childCA
 			}
 
 			// 2、Update certificates for all roles in all spaces
-			scopes, err := listStorage(ctx, req, "scope")
+			scopes, err := listStorage(ctx, req.Storage, "scope")
 			if err != nil {
 				return nil, err
 			}
-			ca := new(CA)
-			role := new(Role)
+
 			for _, scopeName := range scopes {
-				roles, err := listStorage(ctx, req, "scope/"+scopeName)
+				roles, err := listStorage(ctx, req.Storage, "scope/"+scopeName)
 				if err != nil {
 					return nil, err
 				}
 				for _, roleName := range roles {
-					role.readStorage(ctx, req, scopeName, roleName)
+					role, err := kb.newRole(scopeName, roleName)
+					if err != nil {
+						return nil, err
+					}
+					role.readStorage(ctx, req.Storage, scopeName, roleName)
 					key := fmt.Sprintf("scope/%s/role/%s/credential/", scopeName, roleName)
-					sn, err := listStorage(ctx, req, key)
+					sn, err := listStorage(ctx, req.Storage, key)
 					if err != nil {
 						return nil, err
 					}
 					for _, s := range sn {
+						ca := kb.newCA(s)
 						// read ca information
-						if err := ca.readStorage(ctx, req, key, s); err != nil {
+						if err := ca.readStorage(ctx, req.Storage, key); err != nil {
 							return nil, err
 						}
 						// Regenerate certificate
-						if err := ca.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, childCA); err != nil {
+						if err := ca.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, rootCA); err != nil {
 							return nil, err
 						}
 						// storage ca
-						if err := ca.writeStorage(ctx, req, key); err != nil {
+						if err := ca.writeStorage(ctx, req.Storage, key); err != nil {
 							return nil, err
 						}
 						data := map[string]interface{}{
-							"ca_chain":      []string{rootCA.CertPEM, childCA.CertPEM},
+							"ca_chain":      []string{rootCA.CertPEM, rootCA.CertPEM},
 							"certificate":   ca.CertPEM,
+							"public_key":    ca.PublicKeyPEM(),
 							"private_key":   ca.PrivateKeyPEM(),
 							"serial_number": s,
 						}
 						// write credential information
-						if err := writeStorage(ctx, req, key+s+"_resData", data); err != nil {
+						if err := writeStorage(ctx, req.Storage, key+s+"_resData", data); err != nil {
 							return nil, fmt.Errorf("failed to write: %w", err)
 						}
 					}
 				}
 			}
 		}
-		if err := config.writeStorage(ctx, req); err != nil {
+		if err := config.writeStorage(ctx, req.Storage); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
 		return nil, nil
 	}
-}
-
-func (c *Config) readStorage(ctx context.Context, req *logical.Request) error {
-	data, err := readStorage(ctx, req, configPath)
-	if err != nil {
-		return err
-	}
-	if err := MapToStruct(data, c); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *Config) writeStorage(ctx context.Context, req *logical.Request) error {
-	buf, err := json.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("json encoding failed: %w", err)
-	}
-
-	// Write out a new key
-	entry := &logical.StorageEntry{
-		Key:   configPath,
-		Value: buf,
-	}
-	if err := req.Storage.Put(ctx, entry); err != nil {
-		return fmt.Errorf("failed to write: %w", err)
-	}
-	return nil
 }
 
 func DefaultConfigMap() map[string]interface{} {
@@ -323,7 +309,7 @@ func DefaultConfigMap() map[string]interface{} {
 		"default_tls_client_ttl":      (336 * time.Hour).String(),
 		"listen_addrs":                []string{"0.0.0.0:5696"},
 		"server_hostnames":            []string{"localhost"},
-		"server_ips":                  []string{"127.0.0.1", "::1"}, // 将拆分后的IP列表赋值给server_ips
+		"server_ips":                  []string{"127.0.0.1", "::1"}, //Assign the split IP list to server_ips
 		"tls_ca_key_bits":             2048,
 		"tls_ca_key_type":             rsaKeyType,
 		"tls_min_version":             "tls12",

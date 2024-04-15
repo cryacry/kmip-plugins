@@ -6,6 +6,7 @@ import (
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,13 +71,13 @@ func pathScope(b *KmipBackend) []*framework.Path {
 	}
 }
 
-func (b *KmipBackend) handleListScopeExistenceCheck() framework.ExistenceFunc {
+func (kb *KmipBackend) handleListScopeExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		return true, nil
 	}
 }
 
-func (b *KmipBackend) handleScopeExistenceCheck() framework.ExistenceFunc {
+func (kb *KmipBackend) handleScopeExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		key := data.Get("scope").(string)
 		out, err := req.Storage.Get(ctx, key)
@@ -87,14 +88,10 @@ func (b *KmipBackend) handleScopeExistenceCheck() framework.ExistenceFunc {
 	}
 }
 
-func (b *KmipBackend) handleScopeList() framework.OperationFunc {
+func (kb *KmipBackend) handleScopeList() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		// Right now we only handle directories, so ensure it ends with /; however,
-		// some physical backends may not handle the "/" case properly, so only add
-		// it if we're not listing the root
-
 		// List the keys at the prefix given by the request
-		keys, err := listStorage(ctx, req, "scope")
+		keys, err := listStorage(ctx, req.Storage, "scope")
 		if err != nil {
 			return nil, err
 		}
@@ -103,9 +100,10 @@ func (b *KmipBackend) handleScopeList() framework.OperationFunc {
 	}
 }
 
-func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
+func (kb *KmipBackend) handleScopeCreate() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		scope := data.Get("scope").(string)
+		kb.scopeLock[scope] = new(sync.RWMutex)
 		key := "scope/" + scope
 		if key == "" {
 			return logical.ErrorResponse("missing path"), nil
@@ -120,19 +118,19 @@ func (b *KmipBackend) handleScopeCreate() framework.OperationFunc {
 		d := map[string]interface{}{
 			"create_time": time.Now().String(),
 		}
-		if err := writeStorage(ctx, req, key, d); err != nil {
+		if err := writeStorage(ctx, req.Storage, key, d); err != nil {
 			return nil, fmt.Errorf("failed to write: %w", err)
 		}
 		return nil, nil
 	}
 }
 
-func (b *KmipBackend) handleScopeDelete() framework.OperationFunc {
+func (kb *KmipBackend) handleScopeDelete() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		scopeName := data.Get("scope").(string)
 		scopePath := "scope/" + scopeName
 		flag := true // Allow deletion
-		roles, err := listStorage(ctx, req, scopePath+"/role")
+		roles, err := listStorage(ctx, req.Storage, scopePath+"/role")
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +147,7 @@ func (b *KmipBackend) handleScopeDelete() framework.OperationFunc {
 			return nil, fmt.Errorf(errNeedForceParam)
 		}
 		for _, roleName := range roles {
-			if err := deleteRole(ctx, req, scopeName, roleName); err != nil {
+			if err := kb.deleteRole(ctx, req, scopeName, roleName); err != nil {
 				return nil, err
 			}
 		}
@@ -157,6 +155,7 @@ func (b *KmipBackend) handleScopeDelete() framework.OperationFunc {
 		if err := req.Storage.Delete(ctx, scopePath); err != nil {
 			return nil, err
 		}
+		delete(kb.scopeLock, scopeName)
 		return nil, nil
 	}
 }

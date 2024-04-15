@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cryacry/kmip-plugins/helper/namespace"
+	"github.com/cryacry/kmip-plugins/kmip"
+	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/jsonutil"
 	"github.com/hashicorp/vault/sdk/logical"
-	"log"
 	"strings"
 	"sync"
 )
@@ -36,9 +37,16 @@ type KmipBackend struct {
 	// listening service management
 	server *kmip.Server
 	// logger is the server logger copied over from core
-	logger  log.Logger
-	storage logical.Storage
-	lock    *sync.Mutex
+	logger          log.Logger
+	storage         logical.Storage
+	lock            *sync.Mutex
+	tokenCreate     func(ctx context.Context, scopeName, roleName string) (*logical.Auth, error)
+	tokenRevoke     func(ctx context.Context, accessor string) error
+	policyCreate    func(ctx context.Context, scopeName, roleName string) error
+	policyDelete    func(ctx context.Context, scope, role string) error
+	mountTransit    func(ctx context.Context, scope, role string) error
+	unmountTransit  func(ctx context.Context, scope, role string) error
+	NamespaceByPath func(nsPath string) (*namespace.Namespace, error)
 }
 
 func NewKmipBackend(ctx context.Context, config *logical.BackendConfig) *KmipBackend {

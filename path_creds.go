@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cryacry/kmip-plugins/helper/namespace"
+	"github.com/hashicorp/vault/helper/namespace"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -96,14 +96,15 @@ func pathCredentials(b *KmipBackend) []*framework.Path {
 	}
 }
 
-func (b *KmipBackend) handleCredentialExistenceCheck() framework.ExistenceFunc {
+func (kb *KmipBackend) handleCredentialExistenceCheck() framework.ExistenceFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 		return true, nil
 	}
 }
 
-func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
+func (kb *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+		kb.tokenAccessor = req.ClientTokenAccessor
 		scopeName := data.Get("scope").(string)
 		roleName := data.Get("role").(string)
 		action := data.Get("action").(string)
@@ -113,7 +114,7 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			ns, _ := namespace.FromContext(ctx)
 			// generate certificate
 			// root ca chain
-			rootSN, err := listStorage(ctx, req, caPath)
+			rootSN, err := listStorage(ctx, req.Storage, caPath)
 			if err != nil {
 				return nil, err
 			}
@@ -125,44 +126,60 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			//	j1.SetString(rootSN[j], 10)
 			//	return i1.Cmp(j1) > 0
 			//})
-			ca := new(CA)
+
+			// ca chain
+
 			var caChain []string
 			for _, k := range rootSN {
-				if err := ca.readStorage(ctx, req, caPath, k); err != nil {
+				ca := kb.newCA(k)
+				if err := ca.readStorage(ctx, req.Storage, caPath); err != nil {
 					return nil, err
 				}
 				caChain = append(caChain, ca.CertPEM)
 			}
-
-			rootCA := new(CA)
-			rootCA.readStorage(ctx, req, caPath, rootSN[len(rootSN)-1])
+			// last ca
+			rootCA := kb.newCA(rootSN[0])
+			rootCA.readStorage(ctx, req.Storage, caPath)
 
 			// roleName config
-			role := new(Role)
-			if err := role.readStorage(ctx, req, scopeName, roleName); err != nil {
+			role, err := kb.newRole(scopeName, roleName)
+			if err != nil {
+				return nil, err
+			}
+			if err := role.readStorage(ctx, req.Storage, scopeName, roleName); err != nil {
 				return nil, err
 			}
 
 			// read sn
-			sn := new(SerialNumber)
-			if err := sn.readStorage(ctx, req); err != nil {
+			sn := kb.newSerialNumber()
+			if err := sn.readStorage(ctx, req.Storage); err != nil {
 				return nil, err
 			}
 
+			// create token
+			//auth, err := kb.tokenCreate(ctx, req, scopeName, roleName, role)
+			//if err != nil {
+			//	return nil, err
+			//}
+
 			// set Cert information
-			childCA := new(CA)
+			childCA := kb.newCA(sn.SN.String())
 			childCA.SetCACert(roleName, scopeName, role.TlsClientKeyTTL, ns, sn)
+			//childCA.setToken(auth)
+
+			// generate ca
 			childCA.CaGenerate(role.TlsClientKeyType, role.TlsClientKeyBits, rootCA)
-			childCA.writeStorage(ctx, req, key)
+			childCA.writeStorage(ctx, req.Storage, key)
 			//role.L.RLock()
 			certSN := childCA.Cert.SerialNumber.String()
 			data := map[string]interface{}{
 				"ca_chain":      caChain,
 				"certificate":   childCA.CertPEM,
+				"public_key":    childCA.PublicKeyPEM(),
 				"private_key":   childCA.PrivateKeyPEM(),
 				"serial_number": certSN,
 			}
-			err = writeStorage(ctx, req, key+certSN+"_resData", data)
+			err = writeStorage(ctx, req.Storage, key+certSN+"_resData", data)
 			if err != nil {
 				return nil, err
 			}
@@ -176,19 +193,28 @@ func (b *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 				return nil, fmt.Errorf("serial_number is required")
 			}
 			serialNumber := req.Data["serial_number"].(string)
+			// revoke token
+			ca := kb.newCA(serialNumber)
+			ca.readStorage(ctx, req.Storage, key)
+			//tokenAccessor := ca.Cert.Subject.CommonName
+			//if err := kb.tokenRevoke(ctx, tokenAccessor); err != nil {
+			//	return nil, err
+			//}
+
 			if err := req.Storage.Delete(ctx, key+serialNumber); err != nil {
 				return nil, fmt.Errorf("failed to write: %w", err)
 			}
 			if err := req.Storage.Delete(ctx, key+serialNumber+"_resData"); err != nil {
 				return nil, fmt.Errorf("failed to write: %w", err)
 			}
+			delete(kb.certLock, serialNumber)
 		}
 		return nil, nil
 	}
 
 }
 
-func (b *KmipBackend) handleCredentialRead() framework.OperationFunc {
+func (kb *KmipBackend) handleCredentialRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 		scope := data.Get("scope").(string)
 		role := data.Get("role").(string)
@@ -202,7 +228,7 @@ func (b *KmipBackend) handleCredentialRead() framework.OperationFunc {
 		serialNumber := req.Data["serial_number"].(string)
 		path := fmt.Sprintf("scope/%s/role/%s/credential/%s_resData", scope, role, serialNumber)
 
-		rawData, err := readStorage(ctx, req, path)
+		rawData, err := readStorage(ctx, req.Storage, path)
 		if err != nil {
 			return nil, err
 		}
@@ -214,16 +240,13 @@ func (b *KmipBackend) handleCredentialRead() framework.OperationFunc {
 	}
 }
 
-func (b *KmipBackend) handleCredentialList() framework.OperationFunc {
+func (kb *KmipBackend) handleCredentialList() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-		// Right now we only handle directories, so ensure it ends with /; however,
-		// some physical backends may not handle the "/" case properly, so only add
-		// it if we're not listing the root
 		scope := data.Get("scope").(string)
 		role := data.Get("role").(string)
 		path := fmt.Sprintf("scope/%s/role/%s/credential", scope, role)
 
-		rawData, err := listStorage(ctx, req, path)
+		rawData, err := listStorage(ctx, req.Storage, path)
 		if err != nil {
 			return nil, err
 		}
