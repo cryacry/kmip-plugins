@@ -42,7 +42,7 @@ type KmipBackend struct {
 	lock            *sync.Mutex
 	TokenCreate     func(ctx context.Context, scopeName, roleName, tokenAccessor string, role Role) (*logical.Auth, error)
 	TokenRevoke     func(ctx context.Context, accessor string) error
-	PolicyCreate    func(ctx context.Context, scopeName, roleName string, role Role) error
+	PolicyCreate    func(ctx context.Context, scopeName, roleName string) error
 	PolicyDelete    func(ctx context.Context, scope, role string) error
 	MountTransit    func(ctx context.Context, scope, role string) error
 	UnmountTransit  func(ctx context.Context, scope, role string) error
@@ -257,16 +257,20 @@ func (kb *KmipBackend) tokenCreate(ctx context.Context, scopeName, roleName stri
 	return auth, err
 }
 
+//func (kb *KmipBackend) policyCreate(ctx context.Context, scopeName, roleName string) error {
+//	role, err := kb.newRole(scopeName, roleName)
+//	if err != nil {
+//		return err
+//	}
+//	role.readStorage(ctx, kb.storage, scopeName, roleName)
+//	if err := kb.PolicyCreate(ctx, scopeName, roleName, *role); err != nil {
+//		return err
+//	}
+//	return nil
+//}
+
 func (kb *KmipBackend) policyCreate(ctx context.Context, scopeName, roleName string) error {
-	role, err := kb.newRole(scopeName, roleName)
-	if err != nil {
-		return err
-	}
-	role.readStorage(ctx, kb.storage, scopeName, roleName)
-	if err := kb.PolicyCreate(ctx, scopeName, roleName, *role); err != nil {
-		return err
-	}
-	return nil
+	return kb.PolicyCreate(ctx, scopeName, roleName)
 }
 
 const KmipHelp = `
