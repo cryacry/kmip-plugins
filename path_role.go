@@ -245,7 +245,7 @@ func (kb *KmipBackend) handleRoleCreate() framework.OperationFunc {
 		}
 
 		// create policy
-		if err := kb.PolicyCreate(ctx, scopeName, roleName); err != nil {
+		if err := kb.policyCreate(ctx, scopeName, roleName); err != nil {
 			return nil, err
 		}
 		// mount transit
