@@ -1,4 +1,4 @@
-module github.com/hashicorp/go-secure-stdlib/plugincontainer
+module github.com/cryacry/kmip-plugins/helper/plugincontainer
 
 go 1.20
 
