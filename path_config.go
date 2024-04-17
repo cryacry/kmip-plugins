@@ -167,7 +167,6 @@ func (kb *KmipBackend) handleConfigRead() framework.OperationFunc {
 		}
 		return resp, nil
 	}
-
 }
 
 func (kb *KmipBackend) handleConfigWrite() framework.OperationFunc {

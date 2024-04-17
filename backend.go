@@ -245,27 +245,45 @@ func deleteStorage(ctx context.Context, req *logical.Request, key string) error 
 }
 
 func (kb *KmipBackend) tokenCreate(ctx context.Context, scopeName, roleName string) (*logical.Auth, error) {
-	auth, err := kb.TokenCreate(ctx, scopeName, roleName, kb.tokenAccessor)
-	if err != nil {
-		return nil, err
+	if kb.TokenCreate == nil {
+		return nil, fmt.Errorf("undefind kmip TokenCreate function")
 	}
-	return auth, err
+	return kb.TokenCreate(ctx, scopeName, roleName, kb.tokenAccessor)
 }
 
-//func (kb *KmipBackend) policyCreate(ctx context.Context, scopeName, roleName string) error {
-//	role, err := kb.newRole(scopeName, roleName)
-//	if err != nil {
-//		return err
-//	}
-//	role.readStorage(ctx, kb.storage, scopeName, roleName)
-//	if err := kb.PolicyCreate(ctx, scopeName, roleName, *role); err != nil {
-//		return err
-//	}
-//	return nil
-//}
+func (kb *KmipBackend) tokenRevoke(ctx context.Context, accessor string) error {
+	if kb.TokenRevoke == nil {
+		return fmt.Errorf("undefind kmip TokenRevoke  function")
+	}
+	return kb.TokenRevoke(ctx, accessor)
+}
 
 func (kb *KmipBackend) policyCreate(ctx context.Context, scopeName, roleName string) error {
-	return kb.PolicyCreate(ctx, scopeName, roleName)
+	if kb.policyCreate != nil {
+		return kb.PolicyCreate(ctx, scopeName, roleName)
+	}
+	return nil
+}
+
+func (kb *KmipBackend) policyDelete(ctx context.Context, scopeName, roleName string) error {
+	if kb.PolicyDelete != nil {
+		return kb.PolicyDelete(ctx, scopeName, roleName)
+	}
+	return nil
+}
+
+func (kb *KmipBackend) mountTransit(ctx context.Context, scope, role string) error {
+	if kb.MountTransit != nil {
+		return kb.MountTransit(ctx, scope, role)
+	}
+	return nil
+}
+
+func (kb *KmipBackend) unmountTransit(ctx context.Context, scope, role string) error {
+	if kb.UnmountTransit != nil {
+		return kb.UnmountTransit(ctx, scope, role)
+	}
+	return nil
 }
 
 const KmipHelp = `

@@ -197,7 +197,7 @@ func (kb *KmipBackend) handleCredentialWrite() framework.OperationFunc {
 			ca := kb.newCA(serialNumber)
 			ca.readStorage(ctx, req.Storage, key)
 			//tokenAccessor := ca.Cert.Subject.CommonName
-			//if err := kb.TokenRevoke(ctx, tokenAccessor); err != nil {
+			//if err := kb.tokenRevoke(ctx, tokenAccessor); err != nil {
 			//	return nil, err
 			//}
 

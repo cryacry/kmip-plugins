@@ -249,7 +249,7 @@ func (kb *KmipBackend) handleRoleCreate() framework.OperationFunc {
 			return nil, err
 		}
 		// mount transit
-		if err := kb.MountTransit(ctx, scopeName, roleName); err != nil {
+		if err := kb.mountTransit(ctx, scopeName, roleName); err != nil {
 			return nil, err
 		}
 		// persist role
@@ -350,11 +350,11 @@ func (kb *KmipBackend) handleRoleDelete() framework.OperationFunc {
 			return nil, err
 		}
 		// delete policy
-		if err := kb.PolicyDelete(ctx, scopeName, roleName); err != nil {
+		if err := kb.policyDelete(ctx, scopeName, roleName); err != nil {
 			return nil, err
 		}
 		// unmount transit
-		if err := kb.UnmountTransit(ctx, scopeName, roleName); err != nil {
+		if err := kb.unmountTransit(ctx, scopeName, roleName); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -377,7 +377,7 @@ func (kb *KmipBackend) deleteRole(ctx context.Context, req *logical.Request, sco
 			return err
 		}
 		tokenAccessor := ca.getTokenAccessor()
-		if err := kb.TokenRevoke(ctx, tokenAccessor); err != nil {
+		if err := kb.tokenRevoke(ctx, tokenAccessor); err != nil {
 			return err
 		}
 		key := credentialPath + k
