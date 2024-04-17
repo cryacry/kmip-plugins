@@ -142,3 +142,15 @@ func structToMapWithJsonTags(input interface{}) (map[string]interface{}, error) 
 
 	return result, nil
 }
+
+// PolicyRaw return policy context
+func PolicyRaw(name string) string {
+	policy := fmt.Sprintf(policyContent, name)
+	return policy
+}
+
+var policyContent = `
+path "/transit-%s/*"{
+   capabilities = ["create", "read", "update", "delete","list"]
+}
+`
